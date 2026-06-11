@@ -1,0 +1,17 @@
+{
+  "name": "astrofarm-simulation",
+  "version": "1.0.0",
+  "description": "3D Dairy Farm Simulation with Three.js, OrbitControls, and Chart.js using mock prediction data.",
+  "scripts": {
+    "dev": "npx -y http-server -p 3000 -o"
+  },
+  "keywords": [
+    "threejs",
+    "simulation",
+    "dairy",
+    "farm",
+    "chartjs"
+  ],
+  "author": "Antigravity",
+  "license": "ISC"
+}

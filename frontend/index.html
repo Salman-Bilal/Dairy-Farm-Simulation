@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AstroFarm: 3D Dairy Farm Digital Twin</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- CSS Styleheet -->
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Three.js, OrbitControls, and Chart.js CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- 3D Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- UI Overlay Wrapper -->
+    <div id="ui-container">
+        
+        <!-- TOP NAVIGATION BAR -->
+        <header id="top-bar">
+            <div class="brand">
+                <i class="fa-solid fa-cow brand-logo"></i>
+                <div class="brand-text">
+                    <h1>AstroFarm</h1>
+                    <span>Digital Twin Simulation v1.0</span>
+                </div>
+            </div>
+
+            <!-- Simulation State Stats -->
+            <div class="quick-stats">
+                <div class="stat-pill healthy" title="Healthy Cows">
+                    <span class="status-indicator-dot green"></span>
+                    <span class="pill-label">Healthy:</span>
+                    <span id="count-healthy" class="pill-val">0</span>
+                </div>
+                <div class="stat-pill risk" title="At-Risk Cows">
+                    <span class="status-indicator-dot yellow"></span>
+                    <span class="pill-label">At-Risk:</span>
+                    <span id="count-risk" class="pill-val">0</span>
+                </div>
+                <div class="stat-pill sick" title="Sick Cows">
+                    <span class="status-indicator-dot red"></span>
+                    <span class="pill-label">Sick:</span>
+                    <span id="count-sick" class="pill-val">0</span>
+                </div>
+            </div>
+
+            <!-- Time & Day Indicators -->
+            <div class="time-widget">
+                <div class="day-indicator">
+                    <span class="small-title">SIMULATION DAY</span>
+                    <span id="day-counter" class="day-val">01</span>
+                </div>
+                <div class="divider"></div>
+                <div class="time-clock">
+                    <i id="time-icon" class="fa-solid fa-sun time-icon-day"></i>
+                    <span id="time-counter" class="time-val">08:00 AM</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- LIVE PROFIT TICKER (Top Right Overlay) -->
+        <div id="profit-ticker" class="glass-panel">
+            <span class="panel-label">ESTIMATED LIFE PROFIT</span>
+            <div class="profit-val-wrapper">
+                <span class="currency">$</span>
+                <span id="live-profit">0.00</span>
+            </div>
+            <div id="profit-delta" class="profit-delta positive">
+                <i class="fa-solid fa-arrow-trend-up"></i>
+                <span id="live-profit-delta">+$0.00 today</span>
+            </div>
+        </div>
+
+        <!-- SIMULATION CONTROLS (Floating Left Panel) -->
+        <div id="sim-controls-panel" class="glass-panel">
+            <h3>Simulation Controller</h3>
+            <div class="control-row">
+                <button id="btn-toggle-time" class="btn btn-secondary" title="Play/Pause Simulation Time">
+                    <i id="play-pause-icon" class="fa-solid fa-pause"></i> Pause Time
+                </button>
+                <button id="btn-sim-day" class="btn btn-primary" title="Fast forward 24 Hours">
+                    <i class="fa-solid fa-forward"></i> Simulate Day
+                </button>
+            </div>
+            <div class="control-slider-group">
+                <label for="speed-slider">Time Speed: <span id="speed-val">10x</span></label>
+                <input type="range" id="speed-slider" min="1" max="100" value="10">
+            </div>
+            <div class="control-info-msg">
+                <i class="fa-solid fa-info-circle"></i>
+                <span>At 18:00, milk is collected at the red barn automatically.</span>
+            </div>
+        </div>
+
+        <!-- MILK COLLECTION PROGRESS OVERLAY -->
+        <div id="milking-overlay" class="glass-panel hidden">
+            <div class="overlay-title">
+                <i class="fa-solid fa-droplet pulse-icon"></i>
+                <h3>Milk Collection Phase</h3>
+            </div>
+            <p>Cows are moving to the collection point...</p>
+            <div class="progress-bar-container">
+                <div id="milking-progress-bar" class="progress-bar-fill"></div>
+            </div>
+            <span id="milking-progress-text">0% Completed</span>
+        </div>
+
+        <!-- SIDEBAR - INDIVIDUAL COW DETAIL AND PREDICTION PANEL -->
+        <aside id="sidebar" class="glass-panel hidden">
+            <button id="btn-close-sidebar" class="btn-close">&times;</button>
+            
+            <!-- Cow Title & Avatar -->
+            <div class="sidebar-header">
+                <div class="cow-avatar-box">
+                    <i class="fa-solid fa-cow"></i>
+                </div>
+                <div class="cow-id-box">
+                    <h2 id="cow-name">Cow #01</h2>
+                    <span id="cow-breed-tag">Holstein-Friesian</span>
+                </div>
+            </div>
+
+            <!-- Health Status Badge -->
+            <div id="cow-health-badge" class="health-badge healthy">
+                <i class="fa-solid fa-circle-check"></i>
+                <span id="cow-health-status">Healthy</span>
+            </div>
+
+            <div class="sidebar-scroll-content">
+                <!-- Editable Parameters Form -->
+                <section class="sidebar-section">
+                    <h3>Adjust Cow Parameters</h3>
+                    <p class="section-subtitle">Real-time parameters fed into the prediction models.</p>
+                    
+                    <div class="input-group">
+                        <label for="input-breed">Breed Type</label>
+                        <select id="input-breed">
+                            <option value="Holstein-Friesian">Holstein-Friesian</option>
+                            <option value="Jersey">Jersey</option>
+                            <option value="Guernsey">Guernsey</option>
+                            <option value="Brown Swiss">Brown Swiss</option>
+                        </select>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="input-age">Age (Years): <span id="val-age">3.2</span></label>
+                        <input type="range" id="input-age" min="1" max="12" step="0.1" value="3.2">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="input-weight">Weight (kg): <span id="val-weight">620</span></label>
+                        <input type="range" id="input-weight" min="400" max="850" step="5" value="620">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="input-feed">Feed Mix Quality</label>
+                        <select id="input-feed">
+                            <option value="Standard Pasture">Standard Pasture</option>
+                            <option value="Alfalfa Concentrate">Alfalfa Concentrate</option>
+                            <option value="High-Protein Blend">High-Protein Blend</option>
+                            <option value="Low-Cost Roughage">Low-Cost Roughage</option>
+                        </select>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="input-water">Daily Water (L): <span id="val-water">65</span></label>
+                        <input type="range" id="input-water" min="20" max="120" step="1" value="65">
+                    </div>
+                </section>
+
+                <!-- Model Predictions Section -->
+                <section class="sidebar-section predictions-container">
+                    <h3>ML Model Predictions</h3>
+                    
+                    <!-- Prediction 1: Health Prediction -->
+                    <div class="prediction-card">
+                        <div class="pred-label">
+                            <span><i class="fa-solid fa-heart-pulse"></i> Animal Health Status</span>
+                            <span id="pred-health-conf" class="confidence-val">96% Conf.</span>
+                        </div>
+                        <div class="pred-result-display">
+                            <span id="pred-health-val" class="pred-val text-green">HEALTHY</span>
+                        </div>
+                        <p class="pred-desc">Determined by Classification Model (Random Forest). Factors: Age, Feed, Water.</p>
+                    </div>
+
+                    <!-- Prediction 2: Daily Milk Prediction -->
+                    <div class="prediction-card">
+                        <div class="pred-label">
+                            <span><i class="fa-solid fa-glass-water"></i> Est. Daily Milk Output</span>
+                        </div>
+                        <div class="pred-result-display">
+                            <span id="pred-milk-val" class="pred-val">28.4 Liters</span>
+                        </div>
+                        <div class="pred-confidence-bar-container">
+                            <div id="pred-milk-bar" class="pred-confidence-bar-fill" style="width: 85%;"></div>
+                        </div>
+                        <p class="pred-desc">Determined by Regression Model (XGBoost). Jersey/Holstein yields depend on weight.</p>
+                    </div>
+
+                    <!-- Prediction 3: Daily Net Profit -->
+                    <div class="prediction-card">
+                        <div class="pred-label">
+                            <span><i class="fa-solid fa-sack-dollar"></i> Net Profit / Day</span>
+                        </div>
+                        <div class="pred-result-display">
+                            <span id="pred-profit-val" class="pred-val text-green">+$14.20</span>
+                        </div>
+                        <p class="pred-desc">Determined by Regression Model (Linear Ridge). Accounts for feed costs & milk yield.</p>
+                    </div>
+                </section>
+            </div>
+            
+            <div class="sidebar-footer">
+                <button id="btn-focus-cow" class="btn btn-primary btn-full-width">
+                    <i class="fa-solid fa-crosshairs"></i> Center Camera on Cow
+                </button>
+            </div>
+        </aside>
+
+        <!-- BOTTOM DRAWER - ANALYTICS DASHBOARD -->
+        <div id="dashboard-drawer" class="glass-panel collapsed">
+            <!-- Drawer Header / Toggle Button -->
+            <button id="btn-toggle-drawer" class="drawer-toggle-btn">
+                <div class="handle"></div>
+                <div class="toggle-content">
+                    <i id="drawer-icon" class="fa-solid fa-chart-line"></i>
+                    <span>Show Herd Performance Dashboard</span>
+                </div>
+            </button>
+
+            <!-- Dashboard Content Grid -->
+            <div class="drawer-content">
+                <div class="dashboard-grid">
+                    <!-- Chart 1: Herd yield and Profits over time -->
+                    <div class="chart-container-wrapper glass-card">
+                        <div class="chart-header">
+                            <h4>Herd Production & Financial Trends</h4>
+                            <span class="chart-subtitle">Daily combined milk output vs Cumulative Net Profits</span>
+                        </div>
+                        <div class="canvas-chart-holder">
+                            <canvas id="herd-trend-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Quick Farm Actions / Controls -->
+                    <div class="quick-actions-panel glass-card">
+                        <h4>Farm Operations & Utilities</h4>
+                        <div class="actions-grid">
+                            <button id="btn-vaccinate-all" class="action-btn-card">
+                                <i class="fa-solid fa-syringe action-icon syringe-icon"></i>
+                                <div class="action-text">
+                                    <span class="action-title">Vaccinate Herd</span>
+                                    <span class="action-desc">Restores all sick cows to healthy status ($100 fee)</span>
+                                </div>
+                            </button>
+                            <button id="btn-upgrade-feed" class="action-btn-card">
+                                <i class="fa-solid fa-wheat-awn action-icon feed-icon"></i>
+                                <div class="action-text">
+                                    <span class="action-title">Upgrade Herd Feed</span>
+                                    <span class="action-desc">Sets all cow feed mixes to High-Protein Blend (+cost)</span>
+                                </div>
+                            </button>
+                            <button id="btn-reset-sim" class="action-btn-card">
+                                <i class="fa-solid fa-rotate-left action-icon reset-icon"></i>
+                                <div class="action-text">
+                                    <span class="action-title">Reset Simulation</span>
+                                    <span class="action-desc">Restores initial state, histories and values</span>
+                                </div>
+                            </button>
+                        </div>
+                        <div class="herd-summary-stats">
+                            <div class="h-stat-box">
+                                <span class="h-stat-num" id="stat-avg-milk">0.0 L</span>
+                                <span class="h-stat-lbl">Avg Milk Yield / Cow</span>
+                            </div>
+                            <div class="h-stat-box">
+                                <span class="h-stat-num" id="stat-feed-cost">$0.00</span>
+                                <span class="h-stat-lbl">Herd Daily Feed Cost</span>
+                            </div>
+                            <div class="h-stat-box">
+                                <span class="h-stat-num" id="stat-total-milk">0 L</span>
+                                <span class="h-stat-lbl">Total Milk Collected</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Instructions Overlay (appears on first load, fades out) -->
+    <div id="intro-overlay" class="intro-screen">
+        <div class="intro-card glass-panel">
+            <i class="fa-solid fa-cow intro-logo"></i>
+            <h2>AstroFarm Digital Twin</h2>
+            <p>Welcome to the 3D Dairy Farm Interactive Simulation. This tool visualizes cow behaviors, health statuses, and milk output using predictions generated from underlying attributes.</p>
+            <div class="instructions-list">
+                <div class="instruction-item">
+                    <span class="inst-num">1</span>
+                    <span><strong>Navigate the 3D Pasture</strong>: Left-click and drag to rotate camera, right-click to pan, scroll to zoom in/out.</span>
+                </div>
+                <div class="instruction-item">
+                    <span class="inst-num">2</span>
+                    <span><strong>Inspect Cows</strong>: Left-click directly on any wandering cow to open its detail sheet, check its health state, and edit its attributes.</span>
+                </div>
+                <div class="instruction-item">
+                    <span class="inst-num">3</span>
+                    <span><strong>Simulate Cycles</strong>: Observe daytime transitions, watch cows walk to the barn at 18:00 for milking, and track data on the graphs.</span>
+                </div>
+            </div>
+            <button id="btn-start" class="btn btn-primary btn-large">Enter Simulation</button>
+        </div>
+    </div>
+
+    <!-- Core Logic Application Script -->
+    <script src="app.js"></script>
+</body>
+</html>
