@@ -7,22 +7,43 @@ const BREEDS = ['Holstein', 'Jersey', 'Sahiwal', 'Cholistani'];
 const NAMES = ['Daisy', 'Bessie', 'Molly', 'Bella', 'Lola', 'Lucy', 'Stella', 'Luna'];
 const FEEDS = ['Standard Pasture', 'Alfalfa Concentrate', 'High-Protein Blend', 'Low-Cost Roughage'];
 
+const BREED_MAX_MILK = { Holstein: 30, Jersey: 22, Sahiwal: 18, Cholistani: 16 };
+
+const GRAZING_ZONES = [
+    { name: 'lush', minX: 2, maxX: 32, minZ: 2, maxZ: 32, color: 0x14532d, opacity: 0.28 },
+    { name: 'moderate', minX: -28, maxX: 28, minZ: -20, maxZ: 20, color: 0x166534, opacity: 0.15 },
+    { name: 'sparse', minX: -36, maxX: -10, minZ: -36, maxZ: -8, color: 0x4d7c0f, opacity: 0.22 }
+];
+
+const WEATHER_TYPES = ['sunny', 'cloudy', 'hot', 'rainy'];
+const WEATHER_ICONS = { sunny: '☀️', cloudy: '⛅', hot: '🌡️', rainy: '🌧️' };
+
 // --- Simulation State ---
 const state = {
     herd: [],
     selectedCow: null,
-    timeOfDay: 8.0, // 24-hour clock (8.0 = 8:00 AM)
+    comparisonCows: [],
+    hoveredCow: null,
+    timeOfDay: 8.0,
     day: 1,
-    timeSpeed: 1.0, // Multiplier for speed of time progression
+    timeSpeed: 1.0,
     isPaused: false,
     milkingActive: false,
     milkingProgress: 0.0,
     totalMilkCollected: 0.0,
-    lifetimeProfit: 250.00, // Starts with some investment capital
+    lifetimeProfit: 250.00,
     dailyProfitDelta: 0.0,
-    history: [], // Tracks daily stats for the dashboard graphs
+    history: [],
+    cowHistory: {},
+    weather: 'sunny',
+    troughFillLevel: 1.0,
+    waterLevel: 1.0,
+    lastMilkingGrades: {},
     milkingStationPos: { x: -8, z: -5 },
-    barnPos: { x: -12, z: -8 }
+    waterTroughPos: { x: 10, z: -8 },
+    barnPos: { x: -12, z: -8 },
+    troughMeshes: null,
+    waterMeshes: null
 };
 
 // --- Three.js Globals ---
@@ -34,7 +55,95 @@ let lastTime = 0;
 let labelContainer;
 
 // --- Chart.js Globals ---
-let trendChart = null;
+const charts = {};
+
+const HEALTH_COLORS = {
+    Healthy: '#10b981',
+    'At Risk': '#f59e0b',
+    Sick: '#ef4444'
+};
+
+function getHealthColor(status) {
+    return HEALTH_COLORS[status] || '#9ca3af';
+}
+
+function getGrazingZoneAt(x, z) {
+    for (const zone of GRAZING_ZONES) {
+        if (x >= zone.minX && x <= zone.maxX && z >= zone.minZ && z <= zone.maxZ) {
+            return zone;
+        }
+    }
+    return null;
+}
+
+function pickGrazingTarget() {
+    if (Math.random() < 0.65) {
+        const lush = GRAZING_ZONES.find(z => z.name === 'lush');
+        return {
+            x: lush.minX + Math.random() * (lush.maxX - lush.minX),
+            z: lush.minZ + Math.random() * (lush.maxZ - lush.minZ)
+        };
+    }
+    let x = (Math.random() - 0.5) * 56;
+    let z = (Math.random() - 0.5) * 56;
+    while (x < -2 && z < -2) {
+        x = (Math.random() - 0.5) * 56;
+        z = (Math.random() - 0.5) * 56;
+    }
+    return { x, z };
+}
+
+function getEffectiveBiometrics(cow) {
+    let temp = cow.bodyTemperatureC;
+    let stress = cow.stressLevel;
+    let activity = cow.activityLevel;
+
+    if (state.weather === 'hot') temp += 0.5;
+    if (state.weather === 'rainy') stress = Math.max(0, stress - 1.0);
+
+    stress += (1 - state.waterLevel) * 3;
+    if (state.troughFillLevel < 0.3) stress += 2.0;
+    else if (state.troughFillLevel < 0.6) stress += 0.5;
+
+    const zone = getGrazingZoneAt(cow.x, cow.z);
+    if (zone && zone.name === 'lush') {
+        activity = Math.min(8000, activity + 500);
+    }
+
+    return {
+        bodyTemperatureC: Math.round(temp * 10) / 10,
+        stressLevel: Math.round(Math.min(10, stress) * 10) / 10,
+        activityLevel: Math.floor(activity)
+    };
+}
+
+function gradeFromRatio(ratio) {
+    if (ratio >= 0.9) return 'A';
+    if (ratio >= 0.8) return 'B';
+    if (ratio >= 0.7) return 'C';
+    if (ratio >= 0.6) return 'D';
+    if (ratio >= 0.5) return 'E';
+    return 'F';
+}
+
+function hexToThreeColor(hex) {
+    return parseInt(hex.replace('#', ''), 16);
+}
+
+function updateHealthRingVisual(cow) {
+    if (!cow.healthRing) return;
+    const color = hexToThreeColor(getHealthColor(cow.healthStatus));
+    cow.healthRing.material.color.setHex(color);
+    cow.healthDot.material.color.setHex(color);
+}
+
+function updateCowCompareHighlights() {
+    state.herd.forEach(c => {
+        if (!c.compareRing) return;
+        const inCompare = state.comparisonCows.some(cc => cc.id === c.id);
+        c.compareRing.visible = inCompare;
+    });
+}
 
 /* ==========================================================================
    Procedural Spot Texture Generator for Cows
@@ -86,6 +195,24 @@ function buildEnvironment() {
     pasture.rotation.x = -Math.PI / 2;
     pasture.receiveShadow = true;
     scene.add(pasture);
+
+    // Grazing zone overlays
+    GRAZING_ZONES.forEach(zone => {
+        const w = zone.maxX - zone.minX;
+        const d = zone.maxZ - zone.minZ;
+        const patch = new THREE.Mesh(
+            new THREE.PlaneGeometry(w, d),
+            new THREE.MeshBasicMaterial({
+                color: zone.color,
+                transparent: true,
+                opacity: zone.opacity,
+                depthWrite: false
+            })
+        );
+        patch.rotation.x = -Math.PI / 2;
+        patch.position.set((zone.minX + zone.maxX) / 2, 0.03, (zone.minZ + zone.maxZ) / 2);
+        scene.add(patch);
+    });
 
     // 2. Fences (Bordering pasture)
     const fenceMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.8 });
@@ -197,11 +324,19 @@ function buildEnvironment() {
     trough.castShadow = true;
     stationGroup.add(trough);
 
-    // Feed / Water inside trough
-    const feedInsideMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 1.0 }); // Yellowish grains
+    // Feed inside trough (animated fill level)
+    const feedInsideMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 1.0 });
     const feedLiquid = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.1, 1.0), feedInsideMat);
     feedLiquid.position.set(0, 0.75, 0);
     stationGroup.add(feedLiquid);
+
+    const troughRingMat = new THREE.MeshBasicMaterial({ color: 0x10b981, side: THREE.DoubleSide, transparent: true, opacity: 0.65 });
+    const troughStatusRing = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.0, 32), troughRingMat);
+    troughStatusRing.rotation.x = -Math.PI / 2;
+    troughStatusRing.position.y = 0.04;
+    stationGroup.add(troughStatusRing);
+
+    state.troughMeshes = { feedLiquid, feedInsideMat, statusRing: troughStatusRing, statusRingMat: troughRingMat };
 
     // Signpost marker
     const postMat = new THREE.MeshStandardMaterial({ color: 0x3d2314 });
@@ -213,6 +348,30 @@ function buildEnvironment() {
     stationGroup.add(signPost, signBoard);
 
     scene.add(stationGroup);
+
+    // 4b. Water Trough (separate hydration station)
+    const waterGroup = new THREE.Group();
+    waterGroup.position.set(state.waterTroughPos.x, 0, state.waterTroughPos.z);
+
+    const waterTroughMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.4 });
+    const waterTrough = new THREE.Mesh(new THREE.BoxGeometry(3, 0.6, 1.0), waterTroughMat);
+    waterTrough.position.y = 0.3;
+    waterTrough.castShadow = true;
+    waterGroup.add(waterTrough);
+
+    const waterInsideMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.2, transparent: true, opacity: 0.85 });
+    const waterLiquid = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.08, 0.85), waterInsideMat);
+    waterLiquid.position.set(0, 0.55, 0);
+    waterGroup.add(waterLiquid);
+
+    const waterRingMat = new THREE.MeshBasicMaterial({ color: 0x10b981, side: THREE.DoubleSide, transparent: true, opacity: 0.65 });
+    const waterStatusRing = new THREE.Mesh(new THREE.RingGeometry(1.0, 1.35, 32), waterRingMat);
+    waterStatusRing.rotation.x = -Math.PI / 2;
+    waterStatusRing.position.y = 0.04;
+    waterGroup.add(waterStatusRing);
+
+    state.waterMeshes = { waterLiquid, waterInsideMat, statusRing: waterStatusRing, statusRingMat: waterRingMat };
+    scene.add(waterGroup);
 
     // 5. Stylized Low-Poly Trees in the corners
     const treeMatTrunk = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.9 });
@@ -409,21 +568,45 @@ class Cow {
         // Store reference to the body material to dynamically change tint
         this.bodyMaterial = bodyMat;
 
+        // Health ring on ground + dot above head
+        const ringColor = hexToThreeColor(HEALTH_COLORS.Healthy);
+        const ringMat = new THREE.MeshBasicMaterial({ color: ringColor, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+        this.healthRing = new THREE.Mesh(new THREE.RingGeometry(0.85, 1.1, 32), ringMat);
+        this.healthRing.rotation.x = -Math.PI / 2;
+        this.healthRing.position.y = 0.04;
+        cowGroup.add(this.healthRing);
+
+        this.healthDot = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), ringMat.clone());
+        this.healthDot.position.y = 2.45;
+        cowGroup.add(this.healthDot);
+
+        // Compare-mode highlight ring
+        const compareMat = new THREE.MeshBasicMaterial({ color: 0x60a5fa, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+        this.compareRing = new THREE.Mesh(new THREE.RingGeometry(1.15, 1.35, 32), compareMat);
+        this.compareRing.rotation.x = -Math.PI / 2;
+        this.compareRing.position.y = 0.03;
+        this.compareRing.visible = false;
+        cowGroup.add(this.compareRing);
+
+        this.ringPulse = 0;
+        this.currentZone = null;
+
         return cowGroup;
     }
 
     async recalculatePredictions() {
         try {
-            // 1. Predict Health Status
+            const bio = getEffectiveBiometrics(this);
+
             const healthResponse = await fetch('http://127.0.0.1:8000/predict/health', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     age: this.age,
                     milk_drop_percentage: this.milkDropPercentage,
-                    body_temperature_c: this.bodyTemperatureC,
-                    activity_level: this.activityLevel,
-                    stress_level: this.stressLevel,
+                    body_temperature_c: bio.bodyTemperatureC,
+                    activity_level: bio.activityLevel,
+                    stress_level: bio.stressLevel,
                     days_since_last_healthy: this.daysSinceLastHealthy
                 })
             });
@@ -446,12 +629,19 @@ class Cow {
                     age_years: this.age,
                     weight_kg: this.weight,
                     days_in_milk: this.daysInMilk,
-                    stress_level: this.stressLevel,
+                    stress_level: bio.stressLevel,
                     health_status: healthStatusNum
                 })
             });
             const milkData = await milkResponse.json();
-            this.predictedMilk = milkData.milk_yield;
+            let milkYield = milkData.milk_yield;
+
+            const zone = getGrazingZoneAt(this.x, this.z);
+            if (zone && zone.name === 'lush') {
+                milkYield = Math.round(milkYield * 1.05 * 100) / 100;
+            }
+            this.predictedMilk = milkYield;
+            this.currentZone = zone ? zone.name : 'open';
 
             // 3. Local individual profit helper (still shown in sidebar)
             const milkRevenue = this.predictedMilk * 0.55; // $0.55 per L
@@ -476,13 +666,15 @@ class Cow {
                 }
             }
 
-            // Update UI floating text if label exists
-            updateFloatingLabel(this);
-            
+            updateHealthRingVisual(this);
+
+            refreshLiveCharts();
+            if (state.comparisonCows.length >= 2) updateComparisonPanel();
+
             if (state.selectedCow === this) {
                 updateSidebarData();
-                updateHerdStatsSummary();
             }
+            updateHerdStatsSummary();
         } catch (err) {
             console.error("API Fetch Error:", err);
         }
@@ -490,15 +682,13 @@ class Cow {
 
     update(dt) {
         // --- Cow AI Wandering & Animations ---
-        const speedMultiplier = (this.healthStatus === 'Healthy') ? 1.0 : (this.healthStatus === 'At-Risk' ? 0.45 : 0.08);
+        const speedMultiplier = (this.healthStatus === 'Healthy') ? 1.0 : (this.healthStatus === 'At Risk' ? 0.45 : 0.08);
         const baseSpeed = 1.8;
         const speed = baseSpeed * speedMultiplier;
 
         if (this.state === 'milking') {
-            // Milking: March cows towards Barn collection station
             const distToStation = Math.sqrt(Math.pow(state.milkingStationPos.x - this.x, 2) + Math.pow(state.milkingStationPos.z - this.z, 2));
             if (distToStation > 1.5) {
-                // Move towards milking point
                 const angle = Math.atan2(state.milkingStationPos.x - this.x, state.milkingStationPos.z - this.z);
                 this.rotationY = angle;
                 this.x += Math.sin(angle) * speed * dt;
@@ -506,23 +696,33 @@ class Cow {
                 this.isIdle = false;
             } else {
                 this.isIdle = true;
-                // Look at trough
                 this.rotationY = Math.PI / 2;
+                if (state.troughFillLevel > 0.05) {
+                    this.head.rotation.x = -0.35 + Math.sin(this.legPhase * 4) * 0.08;
+                    this.legPhase += dt * 2;
+                }
+            }
+        } else if (this.state === 'eating') {
+            const distToWater = Math.sqrt(Math.pow(state.waterTroughPos.x - this.x, 2) + Math.pow(state.waterTroughPos.z - this.z, 2));
+            if (distToWater > 1.2) {
+                const angle = Math.atan2(state.waterTroughPos.x - this.x, state.waterTroughPos.z - this.z);
+                this.rotationY = angle;
+                this.x += Math.sin(angle) * speed * dt;
+                this.z += Math.cos(angle) * speed * dt;
+                this.isIdle = false;
+            } else {
+                this.isIdle = true;
+                this.head.rotation.x = -0.3 + Math.sin(this.legPhase * 3) * 0.06;
+                this.legPhase += dt * 2;
             }
         } else {
             // Wandering AI
             if (this.isIdle) {
                 this.idleTimer -= dt;
                 if (this.idleTimer <= 0) {
-                    // Pick new target location
-                    this.targetX = (Math.random() - 0.5) * 56;
-                    this.targetZ = (Math.random() - 0.5) * 56;
-                    
-                    // Don't target too close to barn structures
-                    while(this.targetX < -2 && this.targetZ < -2) {
-                        this.targetX = (Math.random() - 0.5) * 56;
-                        this.targetZ = (Math.random() - 0.5) * 56;
-                    }
+                    const target = pickGrazingTarget();
+                    this.targetX = target.x;
+                    this.targetZ = target.z;
 
                     this.isIdle = false;
                     this.idleTimer = Math.random() * 12 + 4;
@@ -585,6 +785,11 @@ class Cow {
                 this.mesh.position.x += Math.sin(this.legPhase * 30) * 0.015;
             }
         }
+
+        // Health ring pulse
+        this.ringPulse += dt * 3;
+        const pulse = 0.65 + Math.sin(this.ringPulse) * 0.15;
+        if (this.healthRing) this.healthRing.material.opacity = pulse;
 
         // Selected highlights
         if (state.selectedCow === this) {
@@ -726,6 +931,7 @@ function updateLightingCycle(dt) {
 
     renderer.setClearColor(skyColor);
     scene.fog = new THREE.FogExp2(skyColor.getHex(), 0.008);
+    applyWeatherVisuals(skyColor.getHex());
 
     // Apply intensities smoothly
     ambientLight.color.setRGB(skyColor.r, skyColor.g, skyColor.b);
@@ -743,66 +949,207 @@ function updateLightingCycle(dt) {
     if (Math.abs(state.timeOfDay - 18.0) < 0.12 && !state.milkingActive) {
         startMilkingPhase();
     }
+
+    // Morning feeding at 08:00
+    if (Math.abs(state.timeOfDay - 8.0) < 0.08 && !state._fedThisMorning) {
+        state._fedThisMorning = true;
+        triggerMorningFeeding();
+    }
+    if (state.timeOfDay > 9.0) state._fedThisMorning = false;
+
+    // Cycle weather every 3 days at midnight
+    if (Math.abs(state.timeOfDay - 0.05) < 0.08 && state.day % 3 === 0 && !state._weatherCycledToday) {
+        state._weatherCycledToday = true;
+        const idx = WEATHER_TYPES.indexOf(state.weather);
+        setWeather(WEATHER_TYPES[(idx + 1) % WEATHER_TYPES.length]);
+    }
+    if (state.timeOfDay > 1.0) state._weatherCycledToday = false;
 }
 
 /* ==========================================================================
-   UI Floating Labels & Dynamic Screen Projections
+   Trough, Water & Weather Systems
    ========================================================================== */
-function setupFloatingLabels() {
-    labelContainer = document.createElement('div');
-    labelContainer.style.position = 'absolute';
-    labelContainer.style.top = '0';
-    labelContainer.style.left = '0';
-    labelContainer.style.width = '100%';
-    labelContainer.style.height = '100%';
-    labelContainer.style.pointerEvents = 'none';
-    labelContainer.style.overflow = 'hidden';
-    labelContainer.style.zIndex = '5';
-    document.body.appendChild(labelContainer);
+function updateTroughVisual() {
+    if (!state.troughMeshes) return;
+    const { feedLiquid, feedInsideMat, statusRingMat } = state.troughMeshes;
+    const level = state.troughFillLevel;
+
+    feedLiquid.scale.y = Math.max(0.05, level);
+    feedLiquid.position.y = 0.7 + (level * 0.05);
+
+    const empty = new THREE.Color(0x3d2314);
+    const full = new THREE.Color(0xd97706);
+    feedInsideMat.color.lerpColors(empty, full, level);
+
+    const ringColor = level > 0.6 ? 0x10b981 : (level > 0.3 ? 0xf59e0b : 0xef4444);
+    statusRingMat.color.setHex(ringColor);
 }
 
-function updateFloatingLabels() {
-    const tempV = new THREE.Vector3();
-    
-    state.herd.forEach(cow => {
-        let label = document.getElementById(`cow-label-${cow.id}`);
-        if (!label) {
-            label = document.createElement('div');
-            label.id = `cow-label-${cow.id}`;
-            label.className = `floating-cow-label healthy`;
-            labelContainer.appendChild(label);
-        }
+function updateWaterVisual() {
+    if (!state.waterMeshes) return;
+    const { waterLiquid, waterInsideMat, statusRingMat } = state.waterMeshes;
+    const level = state.waterLevel;
 
-        // Project 3D position above the cow body onto 2D screen coordinates
-        tempV.copy(cow.mesh.position);
-        tempV.y += 2.3; // Above head height
-        
-        // Check if point is behind camera
-        tempV.project(camera);
-        
-        // Hide labels if camera is rotated away
-        if (tempV.z > 1) {
-            label.style.opacity = '0';
-            return;
-        }
+    waterLiquid.scale.y = Math.max(0.05, level);
+    waterLiquid.position.y = 0.5 + (level * 0.05);
+    waterInsideMat.opacity = 0.3 + level * 0.55;
 
-        const x = (tempV.x *  .5 + .5) * window.innerWidth;
-        const y = (tempV.y * -.5 + .5) * window.innerHeight;
-
-        label.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
-        label.style.opacity = '1';
-        
-        // Class styling based on health status
-        label.className = `floating-cow-label ${cow.healthStatus.toLowerCase().replace('-', '')}`;
-        label.innerHTML = `<i class="fa-solid fa-cow"></i> ${cow.name} (${cow.predictedMilk}L)`;
-    });
+    const ringColor = level > 0.6 ? 0x10b981 : (level > 0.3 ? 0xf59e0b : 0xef4444);
+    statusRingMat.color.setHex(ringColor);
 }
 
-function updateFloatingLabel(cow) {
-    const label = document.getElementById(`cow-label-${cow.id}`);
-    if (label) {
-        label.innerHTML = `<i class="fa-solid fa-cow"></i> ${cow.name} (${cow.predictedMilk}L)`;
+function depleteResourcesAfterMilking() {
+    state.troughFillLevel = Math.max(0, state.troughFillLevel - 0.06 * (state.herd.length / 8));
+    state.waterLevel = Math.max(0, state.waterLevel - 0.05);
+    updateTroughVisual();
+    updateWaterVisual();
+    state.herd.forEach(c => c.recalculatePredictions());
+}
+
+function refillTrough() {
+    if (state.lifetimeProfit < 10) {
+        alert('Insufficient funds! Refill costs $10.');
+        return;
     }
+    state.lifetimeProfit -= 10;
+    document.getElementById('live-profit').textContent = state.lifetimeProfit.toFixed(2);
+    state.troughFillLevel = 1.0;
+    state.herd.forEach(c => { c.stressLevel = Math.min(10, c.stressLevel + 0.5); });
+    updateTroughVisual();
+    state.herd.forEach(c => c.recalculatePredictions());
+    updateHerdStatsSummary();
+}
+
+function refillWater() {
+    if (state.lifetimeProfit < 5) {
+        alert('Insufficient funds! Water refill costs $5.');
+        return;
+    }
+    state.lifetimeProfit -= 5;
+    document.getElementById('live-profit').textContent = state.lifetimeProfit.toFixed(2);
+    state.waterLevel = 1.0;
+    updateWaterVisual();
+    state.herd.forEach(c => c.recalculatePredictions());
+    updateHerdStatsSummary();
+}
+
+function updateWeatherUI() {
+    const el = document.getElementById('weather-display');
+    if (el) {
+        el.textContent = `${WEATHER_ICONS[state.weather]} ${state.weather.charAt(0).toUpperCase() + state.weather.slice(1)}`;
+    }
+    const select = document.getElementById('weather-select');
+    if (select) select.value = state.weather;
+}
+
+function applyWeatherVisuals(baseSkyHex) {
+    if (!scene.fog) return;
+    const overrides = { cloudy: 0x94a3b8, hot: 0xfbbf24, rainy: 0x64748b };
+    const densities = { sunny: 0.008, cloudy: 0.009, hot: 0.006, rainy: 0.012 };
+
+    if (state.weather === 'sunny' && baseSkyHex !== undefined) {
+        scene.fog.color.setHex(baseSkyHex);
+    } else if (overrides[state.weather]) {
+        scene.fog.color.setHex(overrides[state.weather]);
+    }
+    scene.fog.density = densities[state.weather] || 0.008;
+}
+
+function setWeather(weather) {
+    state.weather = weather;
+    updateWeatherUI();
+    state.herd.forEach(c => c.recalculatePredictions());
+}
+
+function triggerMorningFeeding() {
+    if (state.troughFillLevel < 0.05) return;
+    state.herd.forEach(c => {
+        if (c.state === 'wander') {
+            c.state = 'eating';
+            c.isIdle = false;
+        }
+    });
+    setTimeout(() => {
+        state.herd.forEach(c => {
+            if (c.state === 'eating') {
+                c.state = 'wander';
+                c.isIdle = false;
+                c.head.rotation.x = 0;
+            }
+        });
+    }, 8000);
+}
+
+/* ==========================================================================
+   Cow Hover Tooltip (replaces always-visible labels)
+   ========================================================================== */
+function setupCowTooltip() {
+    labelContainer = document.createElement('div');
+    labelContainer.id = 'cow-tooltip-container';
+    labelContainer.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;z-index:5;';
+    document.body.appendChild(labelContainer);
+
+    const tooltip = document.createElement('div');
+    tooltip.id = 'cow-tooltip';
+    tooltip.className = 'cow-hover-tooltip hidden';
+    labelContainer.appendChild(tooltip);
+}
+
+function updateCowTooltip(cow) {
+    const tooltip = document.getElementById('cow-tooltip');
+    if (!tooltip) return;
+
+    if (!cow) {
+        tooltip.classList.add('hidden');
+        return;
+    }
+
+    const agePct = Math.min(100, Math.max(0, (cow.age / 5) * 100));
+    const ageDecline = cow.age > 8;
+    const grade = state.lastMilkingGrades[cow.id] || '—';
+    const zoneLabel = cow.currentZone ? cow.currentZone.charAt(0).toUpperCase() + cow.currentZone.slice(1) : 'Open';
+
+    tooltip.classList.remove('hidden');
+    tooltip.className = `cow-hover-tooltip ${cow.healthStatus.toLowerCase().replace(' ', '')}`;
+    tooltip.innerHTML = `
+        <div class="tooltip-name">${cow.name}</div>
+        <div class="tooltip-row"><i class="fa-solid fa-glass-water"></i> ${cow.predictedMilk.toFixed(1)} L</div>
+        <div class="tooltip-row"><i class="fa-solid fa-heart-pulse"></i> ${cow.healthStatus}</div>
+        <div class="tooltip-row"><i class="fa-solid fa-seedling"></i> ${zoneLabel} zone</div>
+        <div class="tooltip-age-bar">
+            <div class="tooltip-age-fill ${ageDecline ? 'declining' : ''}" style="width:${agePct}%"></div>
+        </div>
+        <div class="tooltip-age-label">Age ${cow.age.toFixed(1)}y ${ageDecline ? '(past peak)' : ''}</div>
+        ${grade !== '—' ? `<div class="tooltip-grade">Last milking: <strong>${grade}</strong></div>` : ''}
+    `;
+
+    const tempV = new THREE.Vector3();
+    tempV.copy(cow.mesh.position);
+    tempV.y += 2.6;
+    tempV.project(camera);
+    if (tempV.z > 1) {
+        tooltip.classList.add('hidden');
+        return;
+    }
+    const x = (tempV.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (tempV.y * -0.5 + 0.5) * window.innerHeight;
+    tooltip.style.transform = `translate(-50%, -110%) translate(${x}px, ${y}px)`;
+}
+
+function raycastCowAtMouse() {
+    raycaster.setFromCamera(mouse, camera);
+    const meshesToCheck = state.herd.map(c => c.mesh);
+    const intersects = raycaster.intersectObjects(meshesToCheck, true);
+    if (intersects.length === 0) return null;
+
+    let targetGroup = intersects[0].object;
+    while (targetGroup && !targetGroup.userData.cowId) {
+        targetGroup = targetGroup.parent;
+    }
+    if (targetGroup && targetGroup.userData.cowId) {
+        return state.herd.find(c => c.id === targetGroup.userData.cowId) || null;
+    }
+    return null;
 }
 
 /* ==========================================================================
@@ -810,9 +1157,6 @@ function updateFloatingLabel(cow) {
    ========================================================================== */
 function updateDayCounter() {
     document.getElementById('day-counter').textContent = state.day.toString().padStart(2, '0');
-    
-    // Add current day summary to history data
-    saveDailyHistory();
 }
 
 function updateUIClock() {
@@ -861,6 +1205,52 @@ function updateHerdStatsSummary() {
     // Average stats on bottom dashboard
     document.getElementById('stat-avg-milk').textContent = `${(totalMilkEst / state.herd.length).toFixed(1)} L`;
     document.getElementById('stat-feed-cost').textContent = `$${totalFeedCost.toFixed(2)}`;
+
+    updateHerdAverages();
+}
+
+function getHerdHealthCounts() {
+    let healthy = 0;
+    let atRisk = 0;
+    let sick = 0;
+
+    state.herd.forEach(c => {
+        if (c.healthStatus === 'Healthy') healthy++;
+        else if (c.healthStatus === 'At Risk') atRisk++;
+        else if (c.healthStatus === 'Sick') sick++;
+    });
+
+    return { healthy, atRisk, sick };
+}
+
+function getHerdBiometricAverages() {
+    const n = state.herd.length || 1;
+    let temp = 0;
+    let stress = 0;
+    let daysInMilk = 0;
+
+    state.herd.forEach(c => {
+        temp += c.bodyTemperatureC;
+        stress += c.stressLevel;
+        daysInMilk += c.daysInMilk;
+    });
+
+    return {
+        avgTemp: temp / n,
+        avgStress: stress / n,
+        avgDaysInMilk: daysInMilk / n
+    };
+}
+
+function updateHerdAverages() {
+    const avgs = getHerdBiometricAverages();
+    const tempEl = document.getElementById('stat-avg-temp');
+    const stressEl = document.getElementById('stat-avg-stress');
+    const dimEl = document.getElementById('stat-avg-dim');
+
+    if (tempEl) tempEl.textContent = `${avgs.avgTemp.toFixed(1)} °C`;
+    if (stressEl) stressEl.textContent = avgs.avgStress.toFixed(1);
+    if (dimEl) dimEl.textContent = `${Math.round(avgs.avgDaysInMilk)} days`;
 }
 
 function updateSidebarData() {
@@ -932,6 +1322,26 @@ function updateSidebarData() {
     pValText.className = 'pred-val';
     if (cow.predictedProfit >= 0) pValText.classList.add('text-green');
     else pValText.classList.add('text-red');
+
+    const ageBar = document.getElementById('sidebar-age-bar');
+    const ageLabel = document.getElementById('sidebar-age-label');
+    if (ageBar) {
+        const agePct = Math.min(100, Math.max(0, (cow.age / 5) * 100));
+        ageBar.style.width = `${agePct}%`;
+        ageBar.className = cow.age > 8 ? 'age-bar-fill declining' : 'age-bar-fill';
+    }
+    if (ageLabel) {
+        ageLabel.textContent = cow.age > 8
+            ? `${cow.age.toFixed(1)} years (declining)`
+            : `${cow.age.toFixed(1)} years (peak ~5y)`;
+    }
+
+    const gradeEl = document.getElementById('pred-milk-grade');
+    if (gradeEl) {
+        const grade = state.lastMilkingGrades[cow.id];
+        gradeEl.textContent = grade ? `Milking Grade: ${grade}` : '';
+        gradeEl.className = grade ? `milking-grade grade-${grade.toLowerCase()}` : 'milking-grade';
+    }
 }
 
 /* ==========================================================================
@@ -1055,8 +1465,19 @@ async function finishMilkingPhase() {
         // Save daily history
         saveDailyHistory(dailyCombinedMilk, dailyCombinedProfit);
 
-        // Refresh charts
+        state.herd.forEach(c => {
+            const maxMilk = BREED_MAX_MILK[c.breed] || 25;
+            const healthMult = c.healthStatus === 'Healthy' ? 1 : (c.healthStatus === 'At Risk' ? 0.85 : 0.6);
+            const theoretical = maxMilk * healthMult;
+            const ratio = theoretical > 0 ? c.predictedMilk / theoretical : 0;
+            state.lastMilkingGrades[c.id] = gradeFromRatio(ratio);
+        });
+        showMilkingGradesToast();
+        depleteResourcesAfterMilking();
+
         updateHerdStatsSummary();
+        if (state.selectedCow) updateSidebarData();
+        updateComparisonPanel();
     } catch (err) {
         console.error("API Profit Fetch Error:", err);
     }
@@ -1081,51 +1502,241 @@ function animateNumberTicker(element, start, end) {
     requestAnimationFrame(updateTicker);
 }
 
+function showMilkingGradesToast() {
+    const toast = document.getElementById('milking-grades-toast');
+    if (!toast) return;
+
+    const grades = state.herd.map(c =>
+        `${c.name}: ${state.lastMilkingGrades[c.id] || '?'}`
+    ).join(' · ');
+
+    toast.textContent = `Milking efficiency — ${grades}`;
+    toast.classList.remove('hidden');
+    clearTimeout(toast._hideTimer);
+    toast._hideTimer = setTimeout(() => toast.classList.add('hidden'), 6000);
+}
+
+/* ==========================================================================
+   Compare Cows Mode & Radar Chart
+   ========================================================================== */
+function toggleComparisonCow(cow) {
+    const idx = state.comparisonCows.findIndex(c => c.id === cow.id);
+    if (idx >= 0) {
+        state.comparisonCows.splice(idx, 1);
+    } else if (state.comparisonCows.length < 2) {
+        state.comparisonCows.push(cow);
+    } else {
+        state.comparisonCows[1] = cow;
+    }
+    updateCowCompareHighlights();
+    updateComparisonPanel();
+}
+
+function normalizeCowMetric(cow, metric) {
+    switch (metric) {
+        case 'milk':
+            return Math.min(100, (cow.predictedMilk / (BREED_MAX_MILK[cow.breed] || 25)) * 100);
+        case 'stress':
+            return Math.max(0, (10 - cow.stressLevel) / 10 * 100);
+        case 'temp':
+            return Math.max(0, 100 - Math.abs(cow.bodyTemperatureC - 38.5) * 40);
+        case 'activity':
+            return Math.min(100, (cow.activityLevel / 8000) * 100);
+        case 'dim': {
+            const optimal = 150;
+            return Math.max(0, 100 - Math.abs(cow.daysInMilk - optimal) / 3);
+        }
+        default:
+            return 50;
+    }
+}
+
+function updateComparisonPanel() {
+    const panel = document.getElementById('comparison-panel');
+    if (!panel) return;
+
+    if (state.comparisonCows.length < 2) {
+        panel.classList.add('hidden');
+        if (charts.radar) charts.radar.destroy();
+        delete charts.radar;
+        return;
+    }
+
+    panel.classList.remove('hidden');
+    const [a, b] = state.comparisonCows;
+
+    document.getElementById('compare-name-a').textContent = a.name;
+    document.getElementById('compare-name-b').textContent = b.name;
+
+    const rows = [
+        { label: 'Breed', key: 'breed', higher: null },
+        { label: 'Age (y)', key: 'age', higher: false },
+        { label: 'Stress', key: 'stressLevel', higher: false },
+        { label: 'Body Temp', key: 'bodyTemperatureC', higher: false },
+        { label: 'Milk (L)', key: 'predictedMilk', higher: true },
+        { label: 'Health', key: 'healthStatus', higher: true },
+        { label: 'Profit ($)', key: 'predictedProfit', higher: true }
+    ];
+
+    const tbody = document.getElementById('compare-table-body');
+    tbody.innerHTML = rows.map(row => {
+        const valA = a[row.key];
+        const valB = b[row.key];
+        let clsA = '';
+        let clsB = '';
+
+        if (row.higher !== null && typeof valA === 'number' && typeof valB === 'number') {
+            if (valA > valB) { clsA = 'compare-better'; clsB = 'compare-worse'; }
+            else if (valB > valA) { clsB = 'compare-better'; clsA = 'compare-worse'; }
+        } else if (row.key === 'healthStatus') {
+            const rank = { Healthy: 3, 'At Risk': 2, Sick: 1 };
+            if (rank[valA] > rank[valB]) { clsA = 'compare-better'; clsB = 'compare-worse'; }
+            else if (rank[valB] > rank[valA]) { clsB = 'compare-better'; clsA = 'compare-worse'; }
+        }
+
+        const fmt = (v) => typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(1)) : v;
+        return `<tr>
+            <td class="${clsA}">${fmt(valA)}</td>
+            <td>${row.label}</td>
+            <td class="${clsB}">${fmt(valB)}</td>
+        </tr>`;
+    }).join('');
+
+    refreshRadarChart();
+}
+
+function setupRadarChart() {
+    const canvas = document.getElementById('cow-radar-chart');
+    if (!canvas || state.comparisonCows.length < 2) return;
+
+    if (charts.radar) charts.radar.destroy();
+
+    const [a, b] = state.comparisonCows;
+    const labels = ['Milk', 'Low Stress', 'Temp', 'Activity', 'Days in Milk'];
+
+    charts.radar = new Chart(canvas.getContext('2d'), {
+        type: 'radar',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: a.name,
+                    data: ['milk', 'stress', 'temp', 'activity', 'dim'].map(m => normalizeCowMetric(a, m)),
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                    borderWidth: 2,
+                    pointRadius: 3
+                },
+                {
+                    label: b.name,
+                    data: ['milk', 'stress', 'temp', 'activity', 'dim'].map(m => normalizeCowMetric(b, m)),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                    borderWidth: 2,
+                    pointRadius: 3
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { labels: { color: '#9ca3af', font: { family: 'Inter', size: 10 } } }
+            },
+            scales: {
+                r: {
+                    min: 0,
+                    max: 100,
+                    ticks: { display: false, stepSize: 25 },
+                    grid: { color: 'rgba(255,255,255,0.08)' },
+                    angleLines: { color: 'rgba(255,255,255,0.08)' },
+                    pointLabels: { color: '#9ca3af', font: { size: 9 } }
+                }
+            }
+        }
+    });
+}
+
+function refreshRadarChart() {
+    if (state.comparisonCows.length < 2) return;
+    if (!charts.radar) {
+        setupRadarChart();
+        return;
+    }
+    const [a, b] = state.comparisonCows;
+    const metrics = ['milk', 'stress', 'temp', 'activity', 'dim'];
+    charts.radar.data.datasets[0].label = a.name;
+    charts.radar.data.datasets[0].data = metrics.map(m => normalizeCowMetric(a, m));
+    charts.radar.data.datasets[1].label = b.name;
+    charts.radar.data.datasets[1].data = metrics.map(m => normalizeCowMetric(b, m));
+    charts.radar.update();
+}
+
+function clearComparison() {
+    state.comparisonCows = [];
+    updateCowCompareHighlights();
+    updateComparisonPanel();
+}
+
 /* ==========================================================================
    Chart.js Dashboard Setup and Tracking
    ========================================================================== */
-function setupDashboardCharts() {
+function chartAxisOptions(leftColor, leftTitle, rightColor, rightTitle) {
+    const scales = {
+        x: {
+            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+            ticks: { color: '#9ca3af', font: { family: 'Inter', size: 10 } }
+        }
+    };
+
+    if (leftTitle) {
+        scales.y = {
+            type: 'linear',
+            display: true,
+            position: 'left',
+            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+            ticks: { color: leftColor, font: { family: 'Inter', size: 10 } },
+            title: { display: true, text: leftTitle, color: leftColor, font: { size: 10 } }
+        };
+    }
+
+    if (rightTitle) {
+        scales.y1 = {
+            type: 'linear',
+            display: true,
+            position: 'right',
+            grid: { drawOnChartArea: false },
+            ticks: { color: rightColor, font: { family: 'Inter', size: 10 } },
+            title: { display: true, text: rightTitle, color: rightColor, font: { size: 10 } }
+        };
+    }
+
+    return scales;
+}
+
+function setupTrendChart() {
     const ctx = document.getElementById('herd-trend-chart').getContext('2d');
-    
-    // Seed initial historical records (7 days to serve as lags for financial forecaster)
-    state.history = [
-        { day: 1, milk: 172.4, dailyProfit: 55.0, cumProfit: 250.0 },
-        { day: 2, milk: 178.6, dailyProfit: 58.2, cumProfit: 308.2 },
-        { day: 3, milk: 168.1, dailyProfit: 54.2, cumProfit: 362.4 },
-        { day: 4, milk: 185.3, dailyProfit: 65.7, cumProfit: 428.1 },
-        { day: 5, milk: 191.0, dailyProfit: 74.7, cumProfit: 502.8 },
-        { day: 6, milk: 180.2, dailyProfit: 60.5, cumProfit: 563.3 },
-        { day: 7, milk: 185.0, dailyProfit: 63.2, cumProfit: 626.5 }
-    ];
-
-    state.day = 8;
-    state.lifetimeProfit = 626.50;
-    state.totalMilkCollected = 1260.6;
-
-    document.getElementById('live-profit').textContent = state.lifetimeProfit.toFixed(2);
-    document.getElementById('stat-total-milk').textContent = `${Math.floor(state.totalMilkCollected)} L`;
-
-    trendChart = new Chart(ctx, {
+    charts.trend = new Chart(ctx, {
         type: 'line',
         data: {
             labels: state.history.map(h => `Day ${h.day}`),
             datasets: [
                 {
-                    label: 'Herd Daily Milk (Liters)',
+                    label: 'Herd Daily Milk (L)',
                     data: state.history.map(h => h.milk),
                     borderColor: '#10b981',
                     backgroundColor: 'rgba(16, 185, 129, 0.05)',
-                    borderWidth: 2.5,
+                    borderWidth: 2,
                     tension: 0.3,
                     fill: true,
                     yAxisID: 'y'
                 },
                 {
-                    label: 'Net Profits Cumulative ($)',
+                    label: 'Cumulative Profit ($)',
                     data: state.history.map(h => h.cumProfit),
                     borderColor: '#3b82f6',
                     backgroundColor: 'rgba(59, 130, 246, 0.05)',
-                    borderWidth: 2.5,
+                    borderWidth: 2,
                     tension: 0.2,
                     fill: true,
                     yAxisID: 'y1'
@@ -1136,57 +1747,264 @@ function setupDashboardCharts() {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    labels: { color: '#9ca3af', font: { family: 'Inter', size: 11 } }
+                legend: { labels: { color: '#9ca3af', font: { family: 'Inter', size: 10 } } }
+            },
+            scales: chartAxisOptions('#10b981', 'Milk (L)', '#3b82f6', 'Profit ($)')
+        }
+    });
+}
+
+function setupMilkYieldChart() {
+    const ctx = document.getElementById('milk-yield-chart').getContext('2d');
+    const sorted = [...state.herd].sort((a, b) => b.predictedMilk - a.predictedMilk);
+
+    charts.milkYield = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: sorted.map(c => c.name),
+            datasets: [{
+                label: 'Predicted Milk (L)',
+                data: sorted.map(c => c.predictedMilk),
+                backgroundColor: sorted.map(c => getHealthColor(c.healthStatus)),
+                borderRadius: 4,
+                borderSkipped: false
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        afterLabel(ctx) {
+                            const cow = sorted[ctx.dataIndex];
+                            return `${cow.breed} · ${cow.healthStatus}`;
+                        }
+                    }
                 }
             },
             scales: {
                 x: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                    ticks: { color: '#9ca3af', font: { family: 'Inter' } }
+                    ticks: { color: '#10b981', font: { family: 'Inter', size: 10 } },
+                    title: { display: true, text: 'Liters', color: '#10b981', font: { size: 10 } }
                 },
                 y: {
-                    type: 'linear',
-                    display: true,
-                    position: 'left',
-                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                    ticks: { color: '#10b981', font: { family: 'Inter' } },
-                    title: { display: true, text: 'Milk Output (Liters)', color: '#10b981' }
-                },
-                y1: {
-                    type: 'linear',
-                    display: true,
-                    position: 'right',
-                    grid: { drawOnChartArea: false }, // Only show left y-axis grids
-                    ticks: { color: '#3b82f6', font: { family: 'Inter' } },
-                    title: { display: true, text: 'Total Net Capital ($)', color: '#3b82f6' }
+                    grid: { display: false },
+                    ticks: { color: '#9ca3af', font: { family: 'Inter', size: 10 } }
                 }
             }
         }
     });
 }
 
+function setupHealthTimelineChart() {
+    const ctx = document.getElementById('health-timeline-chart').getContext('2d');
+    charts.healthTimeline = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: state.history.map(h => `Day ${h.day}`),
+            datasets: [
+                {
+                    label: 'Healthy',
+                    data: state.history.map(h => h.healthy),
+                    backgroundColor: HEALTH_COLORS.Healthy,
+                    borderRadius: 2
+                },
+                {
+                    label: 'At Risk',
+                    data: state.history.map(h => h.atRisk),
+                    backgroundColor: HEALTH_COLORS['At Risk'],
+                    borderRadius: 2
+                },
+                {
+                    label: 'Sick',
+                    data: state.history.map(h => h.sick),
+                    backgroundColor: HEALTH_COLORS.Sick,
+                    borderRadius: 2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#9ca3af', font: { family: 'Inter', size: 10 }, boxWidth: 12 }
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    grid: { display: false },
+                    ticks: { color: '#9ca3af', font: { family: 'Inter', size: 10 } }
+                },
+                y: {
+                    stacked: true,
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#9ca3af', font: { family: 'Inter', size: 10 }, stepSize: 1 },
+                    title: { display: true, text: 'Cow Count', color: '#9ca3af', font: { size: 10 } }
+                }
+            }
+        }
+    });
+}
+
+function setupStressMilkScatter() {
+    const ctx = document.getElementById('stress-milk-scatter').getContext('2d');
+    charts.scatter = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: ['Healthy', 'At Risk', 'Sick'].map(status => ({
+                label: status,
+                data: state.herd
+                    .filter(c => c.healthStatus === status)
+                    .map(c => ({ x: c.stressLevel, y: c.predictedMilk, name: c.name })),
+                backgroundColor: getHealthColor(status),
+                pointRadius: 7,
+                pointHoverRadius: 9
+            }))
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#9ca3af', font: { family: 'Inter', size: 10 }, boxWidth: 10 }
+                },
+                tooltip: {
+                    callbacks: {
+                        label(ctx) {
+                            const pt = ctx.raw;
+                            return `${pt.name}: ${pt.y.toFixed(1)} L @ stress ${pt.x.toFixed(1)}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#f59e0b', font: { family: 'Inter', size: 10 } },
+                    title: { display: true, text: 'Stress Level', color: '#f59e0b', font: { size: 10 } }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#10b981', font: { family: 'Inter', size: 10 } },
+                    title: { display: true, text: 'Milk Yield (L)', color: '#10b981', font: { size: 10 } }
+                }
+            }
+        }
+    });
+}
+
+function refreshLiveCharts() {
+    if (charts.milkYield) {
+        const sorted = [...state.herd].sort((a, b) => b.predictedMilk - a.predictedMilk);
+        charts.milkYield.data.labels = sorted.map(c => c.name);
+        charts.milkYield.data.datasets[0].data = sorted.map(c => c.predictedMilk);
+        charts.milkYield.data.datasets[0].backgroundColor = sorted.map(c => getHealthColor(c.healthStatus));
+        charts.milkYield.update('none');
+    }
+
+    if (charts.scatter) {
+        charts.scatter.data.datasets = ['Healthy', 'At Risk', 'Sick'].map(status => ({
+            label: status,
+            data: state.herd
+                .filter(c => c.healthStatus === status)
+                .map(c => ({ x: c.stressLevel, y: c.predictedMilk, name: c.name })),
+            backgroundColor: getHealthColor(status),
+            pointRadius: 7,
+            pointHoverRadius: 9
+        }));
+        charts.scatter.update('none');
+    }
+}
+
+function refreshHistoryCharts() {
+    if (charts.trend) {
+        charts.trend.data.labels = state.history.map(h => `Day ${h.day}`);
+        charts.trend.data.datasets[0].data = state.history.map(h => h.milk);
+        charts.trend.data.datasets[1].data = state.history.map(h => h.cumProfit);
+        charts.trend.update();
+    }
+
+    if (charts.healthTimeline) {
+        charts.healthTimeline.data.labels = state.history.map(h => `Day ${h.day}`);
+        charts.healthTimeline.data.datasets[0].data = state.history.map(h => h.healthy);
+        charts.healthTimeline.data.datasets[1].data = state.history.map(h => h.atRisk);
+        charts.healthTimeline.data.datasets[2].data = state.history.map(h => h.sick);
+        charts.healthTimeline.update();
+    }
+}
+
+function setupDashboardCharts() {
+    // Seed initial historical records (7 days to serve as lags for financial forecaster)
+    state.history = [
+        { day: 1, milk: 172.4, dailyProfit: 55.0, cumProfit: 250.0, healthy: 7, atRisk: 1, sick: 0, avgTemp: 38.5, avgStress: 4.1, avgDaysInMilk: 118 },
+        { day: 2, milk: 178.6, dailyProfit: 58.2, cumProfit: 308.2, healthy: 7, atRisk: 1, sick: 0, avgTemp: 38.6, avgStress: 4.0, avgDaysInMilk: 119 },
+        { day: 3, milk: 168.1, dailyProfit: 54.2, cumProfit: 362.4, healthy: 6, atRisk: 2, sick: 0, avgTemp: 38.7, avgStress: 4.5, avgDaysInMilk: 120 },
+        { day: 4, milk: 185.3, dailyProfit: 65.7, cumProfit: 428.1, healthy: 7, atRisk: 1, sick: 0, avgTemp: 38.5, avgStress: 3.8, avgDaysInMilk: 121 },
+        { day: 5, milk: 191.0, dailyProfit: 74.7, cumProfit: 502.8, healthy: 8, atRisk: 0, sick: 0, avgTemp: 38.4, avgStress: 3.5, avgDaysInMilk: 122 },
+        { day: 6, milk: 180.2, dailyProfit: 60.5, cumProfit: 563.3, healthy: 7, atRisk: 0, sick: 1, avgTemp: 38.8, avgStress: 5.2, avgDaysInMilk: 123 },
+        { day: 7, milk: 185.0, dailyProfit: 63.2, cumProfit: 626.5, healthy: 7, atRisk: 1, sick: 0, avgTemp: 38.6, avgStress: 4.3, avgDaysInMilk: 124 }
+    ];
+
+    state.day = 8;
+    state.lifetimeProfit = 626.50;
+    state.totalMilkCollected = 1260.6;
+
+    document.getElementById('live-profit').textContent = state.lifetimeProfit.toFixed(2);
+    document.getElementById('stat-total-milk').textContent = `${Math.floor(state.totalMilkCollected)} L`;
+
+    setupTrendChart();
+    setupMilkYieldChart();
+    setupHealthTimelineChart();
+    setupStressMilkScatter();
+    updateHerdAverages();
+}
+
 function saveDailyHistory(milkToday, profitToday) {
-    // Save history point
+    const healthCounts = getHerdHealthCounts();
+    const avgs = getHerdBiometricAverages();
+
     state.history.push({
         day: state.day - 1,
         milk: Math.round(milkToday * 10) / 10,
         dailyProfit: Math.round(profitToday * 100) / 100,
-        cumProfit: Math.round(state.lifetimeProfit * 100) / 100
+        cumProfit: Math.round(state.lifetimeProfit * 100) / 100,
+        healthy: healthCounts.healthy,
+        atRisk: healthCounts.atRisk,
+        sick: healthCounts.sick,
+        avgTemp: Math.round(avgs.avgTemp * 10) / 10,
+        avgStress: Math.round(avgs.avgStress * 10) / 10,
+        avgDaysInMilk: Math.round(avgs.avgDaysInMilk)
     });
 
-    // Limit array size to 10 points
-    if (state.history.length > 10) {
+    state.herd.forEach(c => {
+        if (!state.cowHistory[c.id]) state.cowHistory[c.id] = [];
+        state.cowHistory[c.id].push({
+            day: state.day - 1,
+            health: c.healthStatus,
+            milk: c.predictedMilk,
+            stress: c.stressLevel,
+            temp: c.bodyTemperatureC
+        });
+        if (state.cowHistory[c.id].length > 14) {
+            state.cowHistory[c.id].shift();
+        }
+    });
+
+    if (state.history.length > 14) {
         state.history.shift();
     }
 
-    // Refresh charts
-    if (trendChart) {
-        trendChart.data.labels = state.history.map(h => `Day ${h.day}`);
-        trendChart.data.datasets[0].data = state.history.map(h => h.milk);
-        trendChart.data.datasets[1].data = state.history.map(h => h.cumProfit);
-        trendChart.update();
-    }
+    refreshHistoryCharts();
+    refreshLiveCharts();
+    updateHerdAverages();
 }
 
 /* ==========================================================================
@@ -1214,6 +2032,12 @@ function onCanvasClick(event) {
 
         if (targetGroup && targetGroup.userData.cowId) {
             const clickedCow = state.herd.find(c => c.id === targetGroup.userData.cowId);
+            if (event.ctrlKey || event.metaKey) {
+                toggleComparisonCow(clickedCow);
+                selectCow(clickedCow);
+                return;
+            }
+            clearComparison();
             selectCow(clickedCow);
             return;
         }
@@ -1475,6 +2299,15 @@ function setupUIListeners() {
         }
     });
 
+    document.getElementById('btn-refill-trough').addEventListener('click', refillTrough);
+    document.getElementById('btn-refill-water').addEventListener('click', refillWater);
+
+    document.getElementById('weather-select').addEventListener('change', (e) => {
+        setWeather(e.target.value);
+    });
+
+    document.getElementById('btn-clear-compare').addEventListener('click', clearComparison);
+
     // 10. Simulate Day Fast Forward
     document.getElementById('btn-sim-day').addEventListener('click', () => {
         if (state.milkingActive) return;
@@ -1556,25 +2389,29 @@ function init() {
 
     // Custom pointer hover styles on cows
     window.addEventListener('mousemove', (e) => {
+        if (e.target.closest('#ui-container') || e.target.closest('#comparison-panel') || e.target.closest('#cow-tooltip')) {
+            state.hoveredCow = null;
+            updateCowTooltip(null);
+            return;
+        }
         mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
         mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-        raycaster.setFromCamera(mouse, camera);
-        
-        const meshesToCheck = state.herd.map(c => c.mesh);
-        const intersects = raycaster.intersectObjects(meshesToCheck, true);
-        
-        if (intersects.length > 0) {
-            document.body.style.cursor = 'pointer';
-        } else {
-            document.body.style.cursor = 'default';
-        }
+
+        const hovered = raycastCowAtMouse();
+        state.hoveredCow = hovered;
+        updateCowTooltip(hovered);
+        document.body.style.cursor = hovered ? 'pointer' : 'default';
     });
 
     // 8. Setup HTML UI widgets & Charts
-    setupFloatingLabels();
+    setupCowTooltip();
     setupUIListeners();
     setupDashboardCharts();
+    updateTroughVisual();
+    updateWaterVisual();
+    updateWeatherUI();
     updateHerdStatsSummary();
+    refreshLiveCharts();
     
     // Start clock in paused mode until intro screen starts
     state.isPaused = true;
@@ -1609,8 +2446,8 @@ function animate(now) {
     // Update milking sequence progression
     updateMilkingSequence(dt);
 
-    // Update HTML overlay labels
-    updateFloatingLabels();
+    // Update hover tooltip position if visible
+    if (state.hoveredCow) updateCowTooltip(state.hoveredCow);
 
     // Render WebGL
     renderer.render(scene, camera);
