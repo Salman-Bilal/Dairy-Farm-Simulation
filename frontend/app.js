@@ -3,7 +3,7 @@
    ========================================================================== */
 
 // --- Global Constants & CDNs Checks ---
-const BREEDS = ['Holstein-Friesian', 'Jersey', 'Guernsey', 'Brown Swiss'];
+const BREEDS = ['Holstein', 'Jersey', 'Sahiwal', 'Cholistani'];
 const NAMES = ['Daisy', 'Bessie', 'Molly', 'Bella', 'Lola', 'Lucy', 'Stella', 'Luna'];
 const FEEDS = ['Standard Pasture', 'Alfalfa Concentrate', 'High-Protein Blend', 'Low-Cost Roughage'];
 
@@ -254,8 +254,16 @@ class Cow {
         this.breed = breed;
         this.age = age;
         this.weight = weight;
-        this.feed = feed;
-        this.water = water;
+        this.feed = feed || 'Standard Pasture';
+        this.water = water || 65;
+
+        // Biometric variables matching ML models
+        this.daysInMilk = Math.floor(50 + Math.random() * 200);
+        this.stressLevel = Math.round((2.0 + Math.random() * 6.0) * 10) / 10;
+        this.milkDropPercentage = Math.round((2.0 + Math.random() * 15.0) * 10) / 10;
+        this.bodyTemperatureC = Math.round((38.2 + Math.random() * 1.5) * 10) / 10;
+        this.activityLevel = Math.floor(3000 + Math.random() * 3000);
+        this.daysSinceLastHealthy = Math.floor(Math.random() * 15);
         
         // Initial 3D placement
         this.x = (Math.random() - 0.5) * 30 + 10;
@@ -270,9 +278,9 @@ class Cow {
         this.legPhase = 0;
         this.state = 'wander'; // 'wander', 'milking', 'resting'
         
-        // Mock prediction variables
+        // Prediction variables
         this.healthStatus = 'Healthy';
-        this.healthConfidence = 90;
+        this.healthConfidence = 90.0;
         this.predictedMilk = 20.0;
         this.predictedProfit = 10.0;
 
@@ -281,7 +289,7 @@ class Cow {
         
         // Sync coordinates
         this.mesh.position.set(this.x, 0, this.z);
-        this.mesh.rotation.y = this.rotationY;
+        this.mesh.rotation.y = this.rotationY - Math.PI / 2;
         this.mesh.userData = { cowId: this.id }; // Store reference for Raycasting
 
         scene.add(this.mesh);
@@ -404,103 +412,80 @@ class Cow {
         return cowGroup;
     }
 
-    recalculatePredictions() {
-        // --- Prediction Heuristics Engine (Mimics RF & XGBoost Outputs) ---
+    async recalculatePredictions() {
+        try {
+            // 1. Predict Health Status
+            const healthResponse = await fetch('http://127.0.0.1:8000/predict/health', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    age: this.age,
+                    milk_drop_percentage: this.milkDropPercentage,
+                    body_temperature_c: this.bodyTemperatureC,
+                    activity_level: this.activityLevel,
+                    stress_level: this.stressLevel,
+                    days_since_last_healthy: this.daysSinceLastHealthy
+                })
+            });
+            const healthData = await healthResponse.json();
+            
+            this.healthStatus = healthData.health_status;
+            this.healthConfidence = healthData.confidence;
+            
+            // Map health status to numeric code for milk model: Healthy=0, At Risk=1, Sick=2
+            let healthStatusNum = 0;
+            if (this.healthStatus === 'At Risk') healthStatusNum = 1;
+            else if (this.healthStatus === 'Sick') healthStatusNum = 2;
 
-        // 1. Health Status Classifier
-        let score = 90;
-        
-        // Age effect: young-mid adult peaks, older has increased risk
-        if (this.age > 8) score -= (this.age - 8) * 6;
-        else if (this.age < 2) score -= (2 - this.age) * 8;
+            // 2. Predict Milk Yield
+            const milkResponse = await fetch('http://127.0.0.1:8000/predict/milk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    breed: this.breed,
+                    age_years: this.age,
+                    weight_kg: this.weight,
+                    days_in_milk: this.daysInMilk,
+                    stress_level: this.stressLevel,
+                    health_status: healthStatusNum
+                })
+            });
+            const milkData = await milkResponse.json();
+            this.predictedMilk = milkData.milk_yield;
 
-        // Feed effect
-        if (this.feed === 'Low-Cost Roughage') score -= 25;
-        else if (this.feed === 'High-Protein Blend') score += 10;
-        else if (this.feed === 'Alfalfa Concentrate') score += 5;
+            // 3. Local individual profit helper (still shown in sidebar)
+            const milkRevenue = this.predictedMilk * 0.55; // $0.55 per L
+            let feedCost = 2.20;
+            if (this.feed === 'High-Protein Blend') feedCost = 5.80;
+            else if (this.feed === 'Alfalfa Concentrate') feedCost = 4.20;
+            else if (this.feed === 'Low-Cost Roughage') feedCost = 1.10;
+            const healthCost = (this.healthStatus === 'Sick') ? 6.00 : (this.healthStatus === 'At Risk' ? 2.50 : 0.0);
+            const overhead = 1.20;
 
-        // Water effect
-        if (this.water < 45) score -= (45 - this.water) * 1.8;
-        else if (this.water > 95) score -= (this.water - 95) * 0.5; // bloating
+            this.predictedProfit = milkRevenue - feedCost - healthCost - overhead;
+            this.predictedProfit = Math.round(this.predictedProfit * 100) / 100;
 
-        // Weight effect
-        if (this.weight < 480) score -= (480 - this.weight) * 0.15;
-
-        // Output Status
-        if (score > 74) {
-            this.healthStatus = 'Healthy';
-            this.healthConfidence = Math.min(99, Math.floor(70 + (score - 70) * 0.9));
-        } else if (score > 48) {
-            this.healthStatus = 'At-Risk';
-            this.healthConfidence = Math.min(98, Math.floor(65 + (75 - score) * 1.1));
-        } else {
-            this.healthStatus = 'Sick';
-            this.healthConfidence = Math.min(99, Math.floor(72 + (50 - score) * 1.3));
-        }
-
-        // 2. Milk Yield Regressor (Liters/day)
-        let baseYield = 25.0;
-        if (this.breed === 'Holstein-Friesian') baseYield = 29.5;
-        else if (this.breed === 'Jersey') baseYield = 22.0;
-        else if (this.breed === 'Guernsey') baseYield = 19.8;
-        else if (this.breed === 'Brown Swiss') baseYield = 23.4;
-
-        // Age curve: peak production around 4-6 years old
-        const ageFactor = 1.0 - 0.035 * Math.pow(this.age - 5.0, 2);
-        
-        // Feed factors
-        let feedFactor = 1.0;
-        if (this.feed === 'High-Protein Blend') feedFactor = 1.24;
-        else if (this.feed === 'Alfalfa Concentrate') feedFactor = 1.14;
-        else if (this.feed === 'Low-Cost Roughage') feedFactor = 0.70;
-
-        // Water dropoff
-        let waterFactor = 1.0;
-        if (this.water < 60) {
-            waterFactor = Math.max(0.2, this.water / 60.0);
-        }
-
-        // Health modifier
-        let healthFactor = 1.0;
-        if (this.healthStatus === 'At-Risk') healthFactor = 0.75;
-        else if (this.healthStatus === 'Sick') healthFactor = 0.35;
-
-        // Combined prediction
-        this.predictedMilk = baseYield * Math.max(0.4, ageFactor) * feedFactor * waterFactor * healthFactor;
-        this.predictedMilk = Math.max(0.5, Math.round(this.predictedMilk * 10) / 10);
-
-        // 3. Daily Net Profit Model
-        // Revenue: Milk price average $0.55 per liter
-        const milkRevenue = this.predictedMilk * 0.55;
-
-        // Costs: Feed costs per day
-        let feedCost = 2.20; // Standard Pasture
-        if (this.feed === 'High-Protein Blend') feedCost = 5.80;
-        else if (this.feed === 'Alfalfa Concentrate') feedCost = 4.20;
-        else if (this.feed === 'Low-Cost Roughage') feedCost = 1.10;
-
-        // Vet operation cost fee if sick
-        const healthCost = (this.healthStatus === 'Sick') ? 3.50 : (this.healthStatus === 'At-Risk' ? 0.80 : 0.0);
-
-        // Fixed overhead per cow
-        const overhead = 1.20;
-
-        this.predictedProfit = milkRevenue - feedCost - healthCost - overhead;
-        this.predictedProfit = Math.round(this.predictedProfit * 100) / 100;
-
-        // Apply health color tint to mesh body
-        if (this.bodyMaterial) {
-            if (this.healthStatus === 'Healthy') {
-                this.bodyMaterial.color.setHex(0xffffff); // Standard spot texture
-            } else if (this.healthStatus === 'At-Risk') {
-                this.bodyMaterial.color.setHex(0xfff5aa); // Soft yellowish tint
-            } else if (this.healthStatus === 'Sick') {
-                this.bodyMaterial.color.setHex(0xffaaaa); // Reddish tint
+            // Apply health color tint to mesh body
+            if (this.bodyMaterial) {
+                if (this.healthStatus === 'Healthy') {
+                    this.bodyMaterial.color.setHex(0xffffff); // Standard spot texture
+                } else if (this.healthStatus === 'At Risk') {
+                    this.bodyMaterial.color.setHex(0xfff5aa); // Soft yellowish tint
+                } else if (this.healthStatus === 'Sick') {
+                    this.bodyMaterial.color.setHex(0xffaaaa); // Reddish tint
+                }
             }
-        }
 
-        // Update UI floating text if label exists
-        updateFloatingLabel(this);
+            // Update UI floating text if label exists
+            updateFloatingLabel(this);
+            
+            if (state.selectedCow === this) {
+                updateSidebarData();
+                updateHerdStatsSummary();
+            }
+        } catch (err) {
+            console.error("API Fetch Error:", err);
+        }
     }
 
     update(dt) {
@@ -567,7 +552,7 @@ class Cow {
 
         // Apply physical coordinates to meshes
         this.mesh.position.set(this.x, 0, this.z);
-        this.mesh.rotation.y = this.rotationY;
+        this.mesh.rotation.y = this.rotationY - Math.PI / 2;
 
         // Animations: Leg swing and tail wiggle
         if (!this.isIdle) {
@@ -857,7 +842,7 @@ function updateHerdStatsSummary() {
 
     state.herd.forEach(c => {
         if (c.healthStatus === 'Healthy') numHealthy++;
-        else if (c.healthStatus === 'At-Risk') numRisk++;
+        else if (c.healthStatus === 'At Risk') numRisk++;
         else if (c.healthStatus === 'Sick') numSick++;
 
         totalMilkEst += c.predictedMilk;
@@ -888,12 +873,12 @@ function updateSidebarData() {
 
     // Set health badge style
     const hBadge = document.getElementById('cow-health-badge');
-    hBadge.className = `health-badge ${cow.healthStatus.toLowerCase().replace('-', '')}`;
+    hBadge.className = `health-badge ${cow.healthStatus.toLowerCase().replace(' ', '')}`;
     hBadge.querySelector('span').textContent = cow.healthStatus;
     
     const hIcon = hBadge.querySelector('i');
     if (cow.healthStatus === 'Healthy') hIcon.className = 'fa-solid fa-circle-check';
-    else if (cow.healthStatus === 'At-Risk') hIcon.className = 'fa-solid fa-triangle-exclamation';
+    else if (cow.healthStatus === 'At Risk') hIcon.className = 'fa-solid fa-triangle-exclamation';
     else hIcon.className = 'fa-solid fa-circle-exclamation';
 
     // Set input values
@@ -904,10 +889,23 @@ function updateSidebarData() {
     document.getElementById('input-weight').value = cow.weight;
     document.getElementById('val-weight').textContent = cow.weight;
 
-    document.getElementById('input-feed').value = cow.feed;
+    document.getElementById('input-days-in-milk').value = cow.daysInMilk;
+    document.getElementById('val-days-in-milk').textContent = cow.daysInMilk;
 
-    document.getElementById('input-water').value = cow.water;
-    document.getElementById('val-water').textContent = cow.water;
+    document.getElementById('input-stress').value = cow.stressLevel;
+    document.getElementById('val-stress').textContent = cow.stressLevel.toFixed(1);
+
+    document.getElementById('input-milk-drop').value = cow.milkDropPercentage;
+    document.getElementById('val-milk-drop').textContent = cow.milkDropPercentage.toFixed(1);
+
+    document.getElementById('input-temp').value = cow.bodyTemperatureC;
+    document.getElementById('val-temp').textContent = cow.bodyTemperatureC.toFixed(1);
+
+    document.getElementById('input-activity').value = cow.activityLevel;
+    document.getElementById('val-activity').textContent = cow.activityLevel;
+
+    document.getElementById('input-days-healthy').value = cow.daysSinceLastHealthy;
+    document.getElementById('val-days-healthy').textContent = cow.daysSinceLastHealthy;
 
     // Set predictions results
     const hConfText = document.getElementById('pred-health-conf');
@@ -917,7 +915,7 @@ function updateSidebarData() {
     
     hValText.className = 'pred-val';
     if (cow.healthStatus === 'Healthy') hValText.classList.add('text-green');
-    else if (cow.healthStatus === 'At-Risk') hValText.classList.add('text-yellow');
+    else if (cow.healthStatus === 'At Risk') hValText.classList.add('text-yellow');
     else hValText.classList.add('text-red');
 
     const mValText = document.getElementById('pred-milk-val');
@@ -982,7 +980,7 @@ function updateMilkingSequence(dt) {
     }
 }
 
-function finishMilkingPhase() {
+async function finishMilkingPhase() {
     state.milkingActive = false;
     
     // Resume standard time speed controls
@@ -994,7 +992,8 @@ function finishMilkingPhase() {
 
     // Aggregate statistics
     let dailyCombinedMilk = 0;
-    let dailyCombinedProfit = 0;
+    let sickCowCount = 0;
+    let totalFeedCost = 0;
 
     state.herd.forEach(c => {
         c.state = 'wander';
@@ -1003,34 +1002,64 @@ function finishMilkingPhase() {
         c.targetZ = (Math.random() - 0.5) * 30;
 
         dailyCombinedMilk += c.predictedMilk;
-        dailyCombinedProfit += c.predictedProfit;
+        if (c.healthStatus === 'Sick') sickCowCount++;
+
+        let cFeedCost = 2.20;
+        if (c.feed === 'High-Protein Blend') cFeedCost = 5.80;
+        else if (c.feed === 'Alfalfa Concentrate') cFeedCost = 4.20;
+        else if (c.feed === 'Low-Cost Roughage') cFeedCost = 1.10;
+        totalFeedCost += cFeedCost;
     });
 
-    state.totalMilkCollected += dailyCombinedMilk;
-    state.lifetimeProfit += dailyCombinedProfit;
-    state.dailyProfitDelta = dailyCombinedProfit;
+    // Get the last 7 daily profits (most recent to oldest)
+    const lags = state.history.slice(-7).reverse().map(h => h.dailyProfit);
 
-    // Update counters values
-    document.getElementById('stat-total-milk').textContent = `${Math.floor(state.totalMilkCollected)} L`;
-    
-    // Profit updates animate ticker
-    const profitEl = document.getElementById('live-profit');
-    animateNumberTicker(profitEl, parseFloat(profitEl.textContent), state.lifetimeProfit);
+    try {
+        const response = await fetch('http://127.0.0.1:8000/predict/profit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                profit_lags: lags,
+                sick_cow_count: sickCowCount,
+                total_milk_l: dailyCombinedMilk,
+                feed_cost_pkr: totalFeedCost
+            })
+        });
+        const data = await response.json();
+        
+        const dailyCombinedProfit = data.predicted_profit;
 
-    const deltaEl = document.getElementById('profit-delta');
-    const deltaText = document.getElementById('live-profit-delta');
-    deltaText.textContent = `${state.dailyProfitDelta >= 0 ? '+' : ''}$${state.dailyProfitDelta.toFixed(2)} today`;
+        state.totalMilkCollected += dailyCombinedMilk;
+        state.lifetimeProfit += dailyCombinedProfit;
+        state.dailyProfitDelta = dailyCombinedProfit;
 
-    if (state.dailyProfitDelta >= 0) {
-        deltaEl.className = 'profit-delta positive';
-        deltaEl.querySelector('i').className = 'fa-solid fa-arrow-trend-up';
-    } else {
-        deltaEl.className = 'profit-delta negative';
-        deltaEl.querySelector('i').className = 'fa-solid fa-arrow-trend-down';
+        // Update counters values
+        document.getElementById('stat-total-milk').textContent = `${Math.floor(state.totalMilkCollected)} L`;
+        
+        // Profit updates animate ticker
+        const profitEl = document.getElementById('live-profit');
+        animateNumberTicker(profitEl, parseFloat(profitEl.textContent), state.lifetimeProfit);
+
+        const deltaEl = document.getElementById('profit-delta');
+        const deltaText = document.getElementById('live-profit-delta');
+        deltaText.textContent = `${state.dailyProfitDelta >= 0 ? '+' : ''}$${state.dailyProfitDelta.toFixed(2)} today`;
+
+        if (state.dailyProfitDelta >= 0) {
+            deltaEl.className = 'profit-delta positive';
+            deltaEl.querySelector('i').className = 'fa-solid fa-arrow-trend-up';
+        } else {
+            deltaEl.className = 'profit-delta negative';
+            deltaEl.querySelector('i').className = 'fa-solid fa-arrow-trend-down';
+        }
+
+        // Save daily history
+        saveDailyHistory(dailyCombinedMilk, dailyCombinedProfit);
+
+        // Refresh charts
+        updateHerdStatsSummary();
+    } catch (err) {
+        console.error("API Profit Fetch Error:", err);
     }
-
-    // Refresh charts
-    updateHerdStatsSummary();
 }
 
 function animateNumberTicker(element, start, end) {
@@ -1058,18 +1087,20 @@ function animateNumberTicker(element, start, end) {
 function setupDashboardCharts() {
     const ctx = document.getElementById('herd-trend-chart').getContext('2d');
     
-    // Seed initial historical records to make graphs visual instantly
+    // Seed initial historical records (7 days to serve as lags for financial forecaster)
     state.history = [
-        { day: 1, milk: 172.4, profit: 250.0 },
-        { day: 2, milk: 178.6, profit: 308.2 },
-        { day: 3, milk: 168.1, profit: 362.4 },
-        { day: 4, milk: 185.3, profit: 428.1 },
-        { day: 5, milk: 191.0, profit: 502.8 }
+        { day: 1, milk: 172.4, dailyProfit: 55.0, cumProfit: 250.0 },
+        { day: 2, milk: 178.6, dailyProfit: 58.2, cumProfit: 308.2 },
+        { day: 3, milk: 168.1, dailyProfit: 54.2, cumProfit: 362.4 },
+        { day: 4, milk: 185.3, dailyProfit: 65.7, cumProfit: 428.1 },
+        { day: 5, milk: 191.0, dailyProfit: 74.7, cumProfit: 502.8 },
+        { day: 6, milk: 180.2, dailyProfit: 60.5, cumProfit: 563.3 },
+        { day: 7, milk: 185.0, dailyProfit: 63.2, cumProfit: 626.5 }
     ];
 
-    state.day = 6;
-    state.lifetimeProfit = 502.80;
-    state.totalMilkCollected = 895.4;
+    state.day = 8;
+    state.lifetimeProfit = 626.50;
+    state.totalMilkCollected = 1260.6;
 
     document.getElementById('live-profit').textContent = state.lifetimeProfit.toFixed(2);
     document.getElementById('stat-total-milk').textContent = `${Math.floor(state.totalMilkCollected)} L`;
@@ -1091,7 +1122,7 @@ function setupDashboardCharts() {
                 },
                 {
                     label: 'Net Profits Cumulative ($)',
-                    data: state.history.map(h => h.profit),
+                    data: state.history.map(h => h.cumProfit),
                     borderColor: '#3b82f6',
                     backgroundColor: 'rgba(59, 130, 246, 0.05)',
                     borderWidth: 2.5,
@@ -1135,16 +1166,13 @@ function setupDashboardCharts() {
     });
 }
 
-function saveDailyHistory() {
-    // Generate actual stats based on cow conditions
-    let herdMilkTotal = 0;
-    state.herd.forEach(c => herdMilkTotal += c.predictedMilk);
-
+function saveDailyHistory(milkToday, profitToday) {
     // Save history point
     state.history.push({
         day: state.day - 1,
-        milk: Math.round(herdMilkTotal * 10) / 10,
-        profit: Math.round(state.lifetimeProfit * 100) / 100
+        milk: Math.round(milkToday * 10) / 10,
+        dailyProfit: Math.round(profitToday * 100) / 100,
+        cumProfit: Math.round(state.lifetimeProfit * 100) / 100
     });
 
     // Limit array size to 10 points
@@ -1156,7 +1184,7 @@ function saveDailyHistory() {
     if (trendChart) {
         trendChart.data.labels = state.history.map(h => `Day ${h.day}`);
         trendChart.data.datasets[0].data = state.history.map(h => h.milk);
-        trendChart.data.datasets[1].data = state.history.map(h => h.profit);
+        trendChart.data.datasets[1].data = state.history.map(h => h.cumProfit);
         trendChart.update();
     }
 }
@@ -1314,20 +1342,67 @@ function setupUIListeners() {
         updateHerdStatsSummary();
     });
 
-    document.getElementById('input-feed').addEventListener('change', (e) => {
+    const daysInMilkRange = document.getElementById('input-days-in-milk');
+    daysInMilkRange.addEventListener('input', (e) => {
         if (!state.selectedCow) return;
-        state.selectedCow.feed = e.target.value;
+        const val = parseInt(e.target.value);
+        state.selectedCow.daysInMilk = val;
+        document.getElementById('val-days-in-milk').textContent = val;
         state.selectedCow.recalculatePredictions();
         updateSidebarData();
         updateHerdStatsSummary();
     });
 
-    const waterRange = document.getElementById('input-water');
-    waterRange.addEventListener('input', (e) => {
+    const stressRange = document.getElementById('input-stress');
+    stressRange.addEventListener('input', (e) => {
+        if (!state.selectedCow) return;
+        const val = parseFloat(e.target.value);
+        state.selectedCow.stressLevel = val;
+        document.getElementById('val-stress').textContent = val.toFixed(1);
+        state.selectedCow.recalculatePredictions();
+        updateSidebarData();
+        updateHerdStatsSummary();
+    });
+
+    const milkDropRange = document.getElementById('input-milk-drop');
+    milkDropRange.addEventListener('input', (e) => {
+        if (!state.selectedCow) return;
+        const val = parseFloat(e.target.value);
+        state.selectedCow.milkDropPercentage = val;
+        document.getElementById('val-milk-drop').textContent = val.toFixed(1);
+        state.selectedCow.recalculatePredictions();
+        updateSidebarData();
+        updateHerdStatsSummary();
+    });
+
+    const tempRange = document.getElementById('input-temp');
+    tempRange.addEventListener('input', (e) => {
+        if (!state.selectedCow) return;
+        const val = parseFloat(e.target.value);
+        state.selectedCow.bodyTemperatureC = val;
+        document.getElementById('val-temp').textContent = val.toFixed(1);
+        state.selectedCow.recalculatePredictions();
+        updateSidebarData();
+        updateHerdStatsSummary();
+    });
+
+    const activityRange = document.getElementById('input-activity');
+    activityRange.addEventListener('input', (e) => {
         if (!state.selectedCow) return;
         const val = parseInt(e.target.value);
-        state.selectedCow.water = val;
-        document.getElementById('val-water').textContent = val;
+        state.selectedCow.activityLevel = val;
+        document.getElementById('val-activity').textContent = val;
+        state.selectedCow.recalculatePredictions();
+        updateSidebarData();
+        updateHerdStatsSummary();
+    });
+
+    const daysHealthyRange = document.getElementById('input-days-healthy');
+    daysHealthyRange.addEventListener('input', (e) => {
+        if (!state.selectedCow) return;
+        const val = parseInt(e.target.value);
+        state.selectedCow.daysSinceLastHealthy = val;
+        document.getElementById('val-days-healthy').textContent = val;
         state.selectedCow.recalculatePredictions();
         updateSidebarData();
         updateHerdStatsSummary();
@@ -1366,8 +1441,11 @@ function setupUIListeners() {
         state.herd.forEach(cow => {
             // Give all cows a standard healthy baseline
             cow.healthStatus = 'Healthy';
-            cow.age = Math.min(8.0, Math.max(2.5, cow.age)); // restore to peak breeding age
-            cow.water = Math.max(65, cow.water);
+            cow.bodyTemperatureC = 38.5;
+            cow.stressLevel = 1.0;
+            cow.activityLevel = 4500;
+            cow.milkDropPercentage = 2.0;
+            cow.daysSinceLastHealthy = 0;
             cow.recalculatePredictions();
         });
 
