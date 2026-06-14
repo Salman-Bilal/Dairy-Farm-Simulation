@@ -145,10 +145,10 @@
                     <div class="input-group">
                         <label for="input-breed">Breed Type</label>
                         <select id="input-breed">
-                            <option value="Holstein-Friesian">Holstein-Friesian</option>
+                            <option value="Holstein">Holstein</option>
                             <option value="Jersey">Jersey</option>
-                            <option value="Guernsey">Guernsey</option>
-                            <option value="Brown Swiss">Brown Swiss</option>
+                            <option value="Sahiwal">Sahiwal</option>
+                            <option value="Cholistani">Cholistani</option>
                         </select>
                     </div>
 
@@ -163,18 +163,33 @@
                     </div>
 
                     <div class="input-group">
-                        <label for="input-feed">Feed Mix Quality</label>
-                        <select id="input-feed">
-                            <option value="Standard Pasture">Standard Pasture</option>
-                            <option value="Alfalfa Concentrate">Alfalfa Concentrate</option>
-                            <option value="High-Protein Blend">High-Protein Blend</option>
-                            <option value="Low-Cost Roughage">Low-Cost Roughage</option>
-                        </select>
+                        <label for="input-days-in-milk">Days in Milk: <span id="val-days-in-milk">150</span></label>
+                        <input type="range" id="input-days-in-milk" min="0" max="300" step="1" value="150">
                     </div>
 
                     <div class="input-group">
-                        <label for="input-water">Daily Water (L): <span id="val-water">65</span></label>
-                        <input type="range" id="input-water" min="20" max="120" step="1" value="65">
+                        <label for="input-stress">Stress Level: <span id="val-stress">3.0</span></label>
+                        <input type="range" id="input-stress" min="0.0" max="10.0" step="0.1" value="3.0">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="input-milk-drop">Milk Drop (%): <span id="val-milk-drop">5.0</span></label>
+                        <input type="range" id="input-milk-drop" min="0.0" max="40.0" step="0.5" value="5.0">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="input-temp">Body Temp (°C): <span id="val-temp">39.0</span></label>
+                        <input type="range" id="input-temp" min="38.0" max="41.5" step="0.1" value="39.0">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="input-activity">Activity Level: <span id="val-activity">4500</span></label>
+                        <input type="range" id="input-activity" min="1000" max="8000" step="100" value="4500">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="input-days-healthy">Days Since Last Healthy: <span id="val-days-healthy">5</span></label>
+                        <input type="range" id="input-days-healthy" min="0" max="30" step="1" value="5">
                     </div>
                 </section>
 
