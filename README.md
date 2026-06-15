@@ -20,7 +20,7 @@
 - [How to Run the Project](#-how-to-run-the-project)
 - [API Endpoints](#-api-endpoints)
 - [Machine Learning Models](#-machine-learning-models)
-- [Screenshots](#-screenshots)
+- [Troubleshooting](#-troubleshooting)
 - [Deployment](#-deployment)
 - [Contributing](#-contributing)
 
@@ -86,14 +86,14 @@ Imagine you own a dairy farm with dozens of cows. Every day you need to answer c
 │                  FASTAPI BACKEND (:8000)                  │
 │                                                          │
 │  ┌─────────────────┐ ┌───────────────┐ ┌─────────────┐  │
-│  │ /predict/health  │ │ /predict/milk │ │/predict/profit│ │
-│  │     (SVM)        │ │(Random Forest)│ │(Time-Series RF)│ │
+│  │ /predict/health │ │ /predict/milk │ │/predict/profit│ │
+│  │ (Random Forest) │ │  (XGBoost)   │ │(Grad Boost)  │  │
 │  └────────┬────────┘ └──────┬────────┘ └──────┬──────┘  │
 │           │                 │                  │         │
 │           ▼                 ▼                  ▼         │
 │  ┌─────────────────────────────────────────────────────┐ │
-│  │              .pkl Model Files (joblib)               │ │
-│  │  cow_health_model  │  milk_yield_model  │  financial │ │
+│  │              .pkl Model Files (joblib)              │ │
+│  │  cow_health_model  │  milk_yield_model  │  financial│ │
 │  └─────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -125,7 +125,8 @@ Imagine you own a dairy farm with dozens of cows. Every day you need to answer c
 
 | Technology | Purpose | Why This Choice |
 |---|---|---|
-| **scikit-learn** | Health classification (Support Vector Machine), Milk yield prediction (Random Forest Regressor), Profit forecasting (Time-Series Random Forest) | Mature, well-documented, works out-of-the-box for tabular classification, regression, and time-series-style lag-based forecasting. |
+| **scikit-learn** | Health classification (Random Forest), Profit forecasting (Gradient Boosting) | Mature, well-documented, works out-of-the-box for tabular classification and regression. |
+| **XGBoost** | Milk yield prediction | Best-in-class gradient boosting for structured data. Handles feature interactions and non-linear patterns better than vanilla sklearn regressors. |
 | **pandas + numpy** | Data preprocessing | The standard Python data manipulation stack. Used for feature engineering, scaling, and encoding in both notebook training and backend inference. |
 | **joblib** | Model serialization | Saves/loads trained models as `.pkl` files. More efficient than `pickle` for numpy-heavy objects. |
 | **matplotlib + seaborn + plotly** | EDA notebook | Used during exploratory data analysis for visualizations, correlation heatmaps, and distribution plots. |
@@ -161,9 +162,9 @@ Dairy-Farm-Simulation/
 │   └── requirements.txt            ← Python dependencies
 │
 ├── 📂 models/                      ← Pre-trained ML models (joblib .pkl)
-│   ├── cow_health_model.pkl        ← SVM classifier (~14 KB)
-│   ├── milk_yield_model.pkl        ← Random Forest regressor (~3 MB)
-│   └── farm_financial_model.pkl    ← Time-Series Random Forest regressor (~937 KB)
+│   ├── cow_health_model.pkl        ← Random Forest classifier (~14 KB)
+│   ├── milk_yield_model.pkl        ← XGBoost regressor (~3 MB)
+│   └── farm_financial_model.pkl    ← Gradient Boosting regressor (~937 KB)
 │
 └── 📂 notebooks/                   ← Training & EDA
     ├── Untitled6.ipynb             ← Jupyter notebook with full EDA + model training
@@ -234,11 +235,19 @@ Start-Process powershell -ArgumentList "-Command", "cd backend; uvicorn main:app
 Start-Process powershell -ArgumentList "-Command", "cd frontend; npx -y http-server -p 3000 -o"
 ```
 
+On **macOS / Linux** with bash:
+
+```bash
+# From the project root directory
+cd backend && uvicorn main:app --port 8000 &
+cd ../frontend && npx -y http-server -p 3000 -o &
+```
+
 ---
 
 ## 📡 API Endpoints
 
-All endpoints accept `POST` requests with JSON bodies.
+All endpoints accept `POST` requests with JSON bodies. Interactive Swagger docs are available at `http://localhost:8000/docs`.
 
 ### `POST /predict/health`
 
@@ -290,6 +299,8 @@ Predicts daily milk yield in liters.
 }
 ```
 
+**Supported Breeds:** `Holstein`, `Jersey`, `Guernsey`, `Ayrshire`, `Brown Swiss`
+
 ---
 
 ### `POST /predict/profit`
@@ -312,6 +323,8 @@ Forecasts next-day profit using a 7-day lag window.
 }
 ```
 
+> **Note:** The `profit_lags` array must contain exactly 7 values representing the last 7 days of profit in USD. The response includes an auto-converted PKR value at 1 USD = 280 PKR.
+
 ---
 
 ## 🤖 Machine Learning Models
@@ -320,7 +333,7 @@ Forecasts next-day profit using a 7-day lag window.
 
 | Property | Detail |
 |---|---|
-| **Algorithm** | Support Vector Machine (SVM) Classifier |
+| **Algorithm** | Random Forest Classifier |
 | **Library** | scikit-learn |
 | **Input Features** | Age, Milk Drop %, Body Temperature, Activity Level, Stress Level, Days Since Last Healthy |
 | **Output** | Classification → `Healthy`, `At Risk`, or `Sick` |
@@ -331,8 +344,8 @@ Forecasts next-day profit using a 7-day lag window.
 
 | Property | Detail |
 |---|---|
-| **Algorithm** | Random Forest Regressor |
-| **Library** | scikit-learn |
+| **Algorithm** | XGBoost Regressor |
+| **Library** | xgboost |
 | **Input Features** | Breed (one-hot encoded), Age, Weight, Days in Milk, Stress Level, Health Status |
 | **Output** | Predicted milk yield in liters/day |
 | **Training Data** | `milk_production_data.csv` — 500 records |
@@ -342,18 +355,37 @@ Forecasts next-day profit using a 7-day lag window.
 
 | Property | Detail |
 |---|---|
-| **Algorithm** | Time-Series Random Forest (Regressor with lag features) |
+| **Algorithm** | Gradient Boosting Regressor |
 | **Library** | scikit-learn |
 | **Input Features** | 7-day profit lag window (lag_1 through lag_7) |
 | **Output** | Next-day predicted profit in USD (auto-converted to PKR at 1 USD = 280 PKR) |
 | **Training Data** | `farm_financial_logs.csv` — 100 daily records with time-series lag features |
 | **File** | `models/farm_financial_model.pkl` (937 KB) |
 
+### Model Training Pipeline
+
+All three models were trained in [`notebooks/Untitled6.ipynb`](notebooks/Untitled6.ipynb). The notebook includes:
+
+- **Exploratory Data Analysis (EDA)** — Distribution plots, correlation heatmaps, breed comparisons
+- **Feature Engineering** — One-hot encoding for categorical variables, lag feature generation for time-series
+- **Train/Test Split** — 80/20 stratified split for classification, sequential split for time-series
+- **Model Selection** — Comparison of multiple algorithms; best performers serialized with `joblib`
+- **Evaluation Metrics** — Accuracy, R² score, MAE, and confusion matrices
+
 ---
 
-## 📸 Screenshots
+## 🔧 Troubleshooting
 
-> _Run the project locally to see the full 3D simulation with live predictions, animated cows, day/night cycle, and interactive dashboard._
+| Problem | Solution |
+|---|---|
+| **`ModuleNotFoundError: No module named 'xgboost'`** | Run `pip install -r backend/requirements.txt` to install all dependencies |
+| **sklearn `InconsistentVersionWarning`** | This is harmless. The models were trained with sklearn 1.6.x but load fine on newer versions. Warnings are suppressed in `main.py`. |
+| **Port 8000 already in use** | Kill the existing process: `netstat -ano \| findstr :8000` then `taskkill /PID <pid> /F` (Windows), or use `--port 8001` |
+| **Port 3000 already in use** | Change the frontend port: `npx -y http-server -p 3001 -o` |
+| **CORS errors in browser console** | Make sure the backend is running on port 8000. The frontend expects `http://localhost:8000`. |
+| **3D scene is black / not rendering** | Ensure your browser supports WebGL. Check at [get.webgl.org](https://get.webgl.org/). Disable hardware acceleration blockers. |
+| **Predictions show "N/A"** | The backend server is not running or not reachable. Check the terminal for errors. |
+| **`422 Unprocessable Entity` on /predict/profit** | The `profit_lags` array must contain exactly 7 float values. Ensure the frontend is sending the correct payload. |
 
 ---
 
@@ -377,7 +409,7 @@ The `frontend/` folder can be deployed to any static hosting provider:
 | **Railway** | Connect repo. Auto-detects Python. Set start command in `Procfile` |
 | **Vercel (Serverless)** | Requires refactoring endpoints into serverless functions |
 
-> **Important:** When deploying, update the `API_BASE` URL in `app.js` from `http://localhost:8000` to your deployed backend URL.
+> **⚠️ Important:** When deploying, update the `API_BASE` URL in `app.js` from `http://localhost:8000` to your deployed backend URL.
 
 ---
 
