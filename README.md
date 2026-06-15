@@ -1,4 +1,4 @@
-<![CDATA[# 🐄 AstroFarm — Dairy Farm Intelligence & Simulation System
+# 🐄 AstroFarm — Dairy Farm Intelligence & Simulation System
 
 > A real-time 3D dairy farm simulation powered by machine learning. Predict cow health, milk yield, and farm profitability — all visualized in an interactive digital twin running in your browser.
 
@@ -401,4 +401,3 @@ This project is licensed under the ISC License.
 <p align="center">
   Built with 🐄 by <strong>Salman & Bilal</strong>
 </p>
-]]>
