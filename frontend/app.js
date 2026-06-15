@@ -703,9 +703,9 @@ class Cow {
                 }
             }
         } else if (this.state === 'eating') {
-            const distToWater = Math.sqrt(Math.pow(state.waterTroughPos.x - this.x, 2) + Math.pow(state.waterTroughPos.z - this.z, 2));
-            if (distToWater > 1.2) {
-                const angle = Math.atan2(state.waterTroughPos.x - this.x, state.waterTroughPos.z - this.z);
+            const distToFeed = Math.sqrt(Math.pow(state.milkingStationPos.x - this.x, 2) + Math.pow(state.milkingStationPos.z - this.z, 2));
+            if (distToFeed > 1.5) {
+                const angle = Math.atan2(state.milkingStationPos.x - this.x, state.milkingStationPos.z - this.z);
                 this.rotationY = angle;
                 this.x += Math.sin(angle) * speed * dt;
                 this.z += Math.cos(angle) * speed * dt;
@@ -969,6 +969,13 @@ function updateLightingCycle(dt) {
 /* ==========================================================================
    Trough, Water & Weather Systems
    ========================================================================== */
+function updateResourceBars() {
+    const troughBar = document.getElementById('trough-level-bar');
+    const waterBar = document.getElementById('water-level-bar');
+    if (troughBar) troughBar.style.width = `${state.troughFillLevel * 100}%`;
+    if (waterBar) waterBar.style.width = `${state.waterLevel * 100}%`;
+}
+
 function updateTroughVisual() {
     if (!state.troughMeshes) return;
     const { feedLiquid, feedInsideMat, statusRingMat } = state.troughMeshes;
@@ -983,6 +990,7 @@ function updateTroughVisual() {
 
     const ringColor = level > 0.6 ? 0x10b981 : (level > 0.3 ? 0xf59e0b : 0xef4444);
     statusRingMat.color.setHex(ringColor);
+    updateResourceBars();
 }
 
 function updateWaterVisual() {
@@ -996,6 +1004,7 @@ function updateWaterVisual() {
 
     const ringColor = level > 0.6 ? 0x10b981 : (level > 0.3 ? 0xf59e0b : 0xef4444);
     statusRingMat.color.setHex(ringColor);
+    updateResourceBars();
 }
 
 function depleteResourcesAfterMilking() {
@@ -1567,6 +1576,8 @@ function updateComparisonPanel() {
 
     document.getElementById('compare-name-a').textContent = a.name;
     document.getElementById('compare-name-b').textContent = b.name;
+    document.getElementById('compare-name-a-th').textContent = a.name;
+    document.getElementById('compare-name-b-th').textContent = b.name;
 
     const rows = [
         { label: 'Breed', key: 'breed', higher: null },
@@ -2413,6 +2424,8 @@ function init() {
     updateHerdStatsSummary();
     refreshLiveCharts();
     
+    state._fedThisMorning = true;
+
     // Start clock in paused mode until intro screen starts
     state.isPaused = true;
 

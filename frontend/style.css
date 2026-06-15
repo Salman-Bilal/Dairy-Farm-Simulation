@@ -381,6 +381,41 @@ h1, h2, h3, h4 {
     margin-top: 2px;
 }
 
+.resource-levels {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-light);
+}
+
+.resource-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.resource-row span { width: 42px; }
+
+.resource-bar {
+    flex: 1;
+    height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.resource-fill {
+    height: 100%;
+    background: #d97706;
+    border-radius: 3px;
+    transition: width 0.3s;
+    width: 100%;
+}
+
+.resource-fill.water { background: #38bdf8; }
+
 /* ==========================================================================
    Milking Phase Progress Overlay
    ========================================================================== */
@@ -757,11 +792,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
     bottom: 20px;
     left: 20px;
     right: 20px;
-    height: 380px;
+    height: 580px;
     display: flex;
     flex-direction: column;
     padding: 0;
-    transform: translateY(315px); /* Peek view state */
+    transform: translateY(515px); /* Peek view state */
     z-index: 15;
     transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -817,15 +852,29 @@ body.sidebar-active #dashboard-drawer {
 
 .drawer-content {
     flex: 1;
-    overflow: hidden;
-    padding: 20px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 16px 20px;
 }
 
 .dashboard-grid {
     display: grid;
-    grid-template-columns: 2fr 1.2fr;
-    gap: 20px;
-    height: 100%;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: minmax(150px, 1fr) minmax(130px, 1fr) auto;
+    gap: 14px;
+    min-height: 100%;
+}
+
+.dashboard-span-2 {
+    grid-column: span 2;
+}
+
+.dashboard-span-full {
+    grid-column: 1 / -1;
+}
+
+.chart-container-wrapper {
+    min-height: 0;
 }
 
 .glass-card {
@@ -838,15 +887,16 @@ body.sidebar-active #dashboard-drawer {
     overflow: hidden;
 }
 
-.chart-header h4, .quick-actions-panel h4 {
-    font-size: 15px;
+.chart-header h4, .quick-actions-panel h4, .herd-averages-card h4 {
+    font-size: 14px;
     color: var(--text-primary);
+    margin-bottom: 2px;
 }
 
 .chart-subtitle {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted);
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     display: block;
 }
 
@@ -979,6 +1029,53 @@ body.sidebar-active #dashboard-drawer {
     margin-top: 2px;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+}
+
+/* Herd Biometric Averages Card */
+.herd-averages-card {
+    padding: 12px 16px;
+}
+
+.herd-averages-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.avg-stat-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    padding: 10px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.avg-stat-icon {
+    font-size: 16px;
+    margin-bottom: 4px;
+}
+
+.avg-stat-icon.temp-icon { color: #f87171; }
+.avg-stat-icon.stress-icon { color: #f59e0b; }
+.avg-stat-icon.dim-icon { color: #60a5fa; }
+
+.avg-stat-num {
+    font-family: var(--font-heading);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.avg-stat-lbl {
+    font-size: 9px;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 /* ==========================================================================
@@ -1194,3 +1291,215 @@ body.sidebar-active #dashboard-drawer {
 .floating-cow-label.sick {
     border-left: 3px solid var(--clr-sick);
 }
+
+/* Weather widget */
+.weather-widget {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.weather-select {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 11px;
+    padding: 2px 6px;
+    cursor: pointer;
+}
+
+.weather-display {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+/* Cow hover tooltip */
+.cow-hover-tooltip {
+    position: absolute;
+    background: rgba(7, 15, 11, 0.92);
+    border: 1px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(8px);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #fff;
+    font-size: 11px;
+    pointer-events: none;
+    z-index: 6;
+    min-width: 140px;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+}
+
+.cow-hover-tooltip.hidden { display: none; }
+.cow-hover-tooltip.healthy { border-left: 3px solid var(--clr-healthy); }
+.cow-hover-tooltip.atrisk { border-left: 3px solid var(--clr-risk); }
+.cow-hover-tooltip.sick { border-left: 3px solid var(--clr-sick); }
+
+.tooltip-name { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+.tooltip-row { color: var(--text-secondary); margin: 2px 0; }
+.tooltip-row i { width: 14px; margin-right: 4px; }
+
+.tooltip-age-bar {
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    margin: 6px 0 2px;
+    overflow: hidden;
+}
+
+.tooltip-age-fill {
+    height: 100%;
+    background: var(--clr-healthy);
+    border-radius: 2px;
+}
+
+.tooltip-age-fill.declining { background: var(--clr-risk); }
+.tooltip-age-label { font-size: 9px; color: var(--text-muted); }
+.tooltip-grade { margin-top: 4px; font-size: 10px; color: var(--clr-accent); }
+
+/* Sidebar age indicator */
+.sidebar-age-indicator {
+    padding: 0 20px 12px;
+}
+
+.sidebar-age-indicator label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.age-bar-track {
+    height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    margin: 6px 0 4px;
+    overflow: hidden;
+}
+
+.age-bar-fill {
+    height: 100%;
+    background: var(--clr-healthy);
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+
+.age-bar-fill.declining { background: var(--clr-risk); }
+.age-bar-label { font-size: 11px; color: var(--text-secondary); }
+
+.milking-grade {
+    font-size: 11px;
+    font-weight: 600;
+    margin: 4px 0 6px;
+    color: var(--clr-accent);
+}
+
+.milking-grade.grade-a { color: #10b981; }
+.milking-grade.grade-b { color: #34d399; }
+.milking-grade.grade-c { color: #fbbf24; }
+.milking-grade.grade-d { color: #f59e0b; }
+.milking-grade.grade-e, .milking-grade.grade-f { color: #ef4444; }
+
+.water-icon {
+    background: rgba(56, 189, 248, 0.12);
+    color: #38bdf8;
+}
+
+/* Compare panel */
+#comparison-panel {
+    position: absolute;
+    top: 90px;
+    left: 20px;
+    width: 320px;
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+    padding: 16px;
+    z-index: 20;
+}
+
+#comparison-panel.hidden { display: none; }
+
+.compare-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.compare-header h3 {
+    font-size: 14px;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.btn-sm {
+    padding: 4px 10px;
+    font-size: 11px;
+}
+
+.compare-names {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.compare-cow-name {
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--clr-accent);
+}
+
+.compare-vs {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin-bottom: 12px;
+}
+
+.compare-table th, .compare-table td {
+    padding: 5px 6px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.compare-table th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 10px;
+}
+
+.compare-better { color: #10b981; font-weight: 700; }
+.compare-worse { color: #ef4444; }
+
+.compare-radar-holder {
+    height: 200px;
+    position: relative;
+}
+
+/* Milking grades toast */
+.milking-grades-toast {
+    position: fixed;
+    top: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(7, 15, 11, 0.95);
+    border: 1px solid var(--clr-accent);
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-size: 12px;
+    color: var(--text-primary);
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    max-width: 80vw;
+    text-align: center;
+}
+
+.milking-grades-toast.hidden { display: none; }

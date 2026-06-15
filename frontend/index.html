@@ -65,6 +65,17 @@
                     <i id="time-icon" class="fa-solid fa-sun time-icon-day"></i>
                     <span id="time-counter" class="time-val">08:00 AM</span>
                 </div>
+                <div class="divider"></div>
+                <div class="weather-widget">
+                    <span class="small-title">WEATHER</span>
+                    <select id="weather-select" class="weather-select">
+                        <option value="sunny">☀️ Sunny</option>
+                        <option value="cloudy">⛅ Cloudy</option>
+                        <option value="hot">🌡️ Hot</option>
+                        <option value="rainy">🌧️ Rainy</option>
+                    </select>
+                    <span id="weather-display" class="weather-display">☀️ Sunny</span>
+                </div>
             </div>
         </header>
 
@@ -100,6 +111,20 @@
                 <i class="fa-solid fa-info-circle"></i>
                 <span>At 18:00, milk is collected at the red barn automatically.</span>
             </div>
+            <div class="control-info-msg">
+                <i class="fa-solid fa-keyboard"></i>
+                <span><strong>Ctrl+Click</strong> two cows to compare side-by-side.</span>
+            </div>
+            <div class="resource-levels">
+                <div class="resource-row">
+                    <span>Trough</span>
+                    <div class="resource-bar"><div id="trough-level-bar" class="resource-fill"></div></div>
+                </div>
+                <div class="resource-row">
+                    <span>Water</span>
+                    <div class="resource-bar"><div id="water-level-bar" class="resource-fill water"></div></div>
+                </div>
+            </div>
         </div>
 
         <!-- MILK COLLECTION PROGRESS OVERLAY -->
@@ -134,6 +159,14 @@
             <div id="cow-health-badge" class="health-badge healthy">
                 <i class="fa-solid fa-circle-check"></i>
                 <span id="cow-health-status">Healthy</span>
+            </div>
+
+            <div class="sidebar-age-indicator">
+                <label>Age vs Peak (5y)</label>
+                <div class="age-bar-track">
+                    <div id="sidebar-age-bar" class="age-bar-fill" style="width:60%"></div>
+                </div>
+                <span id="sidebar-age-label" class="age-bar-label">3.2 years (peak ~5y)</span>
             </div>
 
             <div class="sidebar-scroll-content">
@@ -217,6 +250,7 @@
                         <div class="pred-result-display">
                             <span id="pred-milk-val" class="pred-val">28.4 Liters</span>
                         </div>
+                        <div id="pred-milk-grade" class="milking-grade"></div>
                         <div class="pred-confidence-bar-container">
                             <div id="pred-milk-bar" class="pred-confidence-bar-fill" style="width: 85%;"></div>
                         </div>
@@ -258,10 +292,10 @@
             <div class="drawer-content">
                 <div class="dashboard-grid">
                     <!-- Chart 1: Herd yield and Profits over time -->
-                    <div class="chart-container-wrapper glass-card">
+                    <div class="chart-container-wrapper glass-card dashboard-span-2">
                         <div class="chart-header">
                             <h4>Herd Production & Financial Trends</h4>
-                            <span class="chart-subtitle">Daily combined milk output vs Cumulative Net Profits</span>
+                            <span class="chart-subtitle">Daily combined milk output vs cumulative net profits</span>
                         </div>
                         <div class="canvas-chart-holder">
                             <canvas id="herd-trend-chart"></canvas>
@@ -284,6 +318,20 @@
                                 <div class="action-text">
                                     <span class="action-title">Upgrade Herd Feed</span>
                                     <span class="action-desc">Sets all cow feed mixes to High-Protein Blend (+cost)</span>
+                                </div>
+                            </button>
+                            <button id="btn-refill-trough" class="action-btn-card">
+                                <i class="fa-solid fa-bowl-food action-icon feed-icon"></i>
+                                <div class="action-text">
+                                    <span class="action-title">Refill Trough ($10)</span>
+                                    <span class="action-desc">Restores feed level — low feed raises herd stress</span>
+                                </div>
+                            </button>
+                            <button id="btn-refill-water" class="action-btn-card">
+                                <i class="fa-solid fa-faucet-drip action-icon water-icon"></i>
+                                <div class="action-text">
+                                    <span class="action-title">Refill Water ($5)</span>
+                                    <span class="action-desc">Restores hydration at the water station</span>
                                 </div>
                             </button>
                             <button id="btn-reset-sim" class="action-btn-card">
@@ -309,9 +357,92 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Chart 2: Milk yield ranked bar -->
+                    <div class="chart-container-wrapper glass-card">
+                        <div class="chart-header">
+                            <h4>Milk Yield Ranking</h4>
+                            <span class="chart-subtitle">Per-cow predicted yield, highest to lowest</span>
+                        </div>
+                        <div class="canvas-chart-holder">
+                            <canvas id="milk-yield-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 3: Health timeline stacked bar -->
+                    <div class="chart-container-wrapper glass-card">
+                        <div class="chart-header">
+                            <h4>Cow Health Timeline</h4>
+                            <span class="chart-subtitle">Healthy / at-risk / sick counts per day</span>
+                        </div>
+                        <div class="canvas-chart-holder">
+                            <canvas id="health-timeline-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 4: Stress vs milk scatter -->
+                    <div class="chart-container-wrapper glass-card">
+                        <div class="chart-header">
+                            <h4>Stress vs Milk Yield</h4>
+                            <span class="chart-subtitle">Each dot is one cow — color = health status</span>
+                        </div>
+                        <div class="canvas-chart-holder">
+                            <canvas id="stress-milk-scatter"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Herd biometric averages -->
+                    <div class="herd-averages-card glass-card dashboard-span-full">
+                        <div class="chart-header">
+                            <h4>Herd Biometric Pulse</h4>
+                            <span class="chart-subtitle">Live averages across all cows</span>
+                        </div>
+                        <div class="herd-averages-grid">
+                            <div class="avg-stat-box">
+                                <i class="fa-solid fa-temperature-half avg-stat-icon temp-icon"></i>
+                                <span class="avg-stat-num" id="stat-avg-temp">— °C</span>
+                                <span class="avg-stat-lbl">Avg Body Temp</span>
+                            </div>
+                            <div class="avg-stat-box">
+                                <i class="fa-solid fa-brain avg-stat-icon stress-icon"></i>
+                                <span class="avg-stat-num" id="stat-avg-stress">—</span>
+                                <span class="avg-stat-lbl">Avg Stress Level</span>
+                            </div>
+                            <div class="avg-stat-box">
+                                <i class="fa-solid fa-calendar-days avg-stat-icon dim-icon"></i>
+                                <span class="avg-stat-num" id="stat-avg-dim">— days</span>
+                                <span class="avg-stat-lbl">Avg Days in Milk</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
+
+        <!-- COMPARE COWS PANEL -->
+        <div id="comparison-panel" class="glass-panel hidden">
+            <div class="compare-header">
+                <h3><i class="fa-solid fa-code-compare"></i> Compare Cows</h3>
+                <button id="btn-clear-compare" class="btn btn-secondary btn-sm">Clear</button>
+            </div>
+            <div class="compare-names">
+                <span id="compare-name-a" class="compare-cow-name">—</span>
+                <span class="compare-vs">vs</span>
+                <span id="compare-name-b" class="compare-cow-name">—</span>
+            </div>
+            <table class="compare-table">
+                <thead>
+                    <tr><th id="compare-name-a-th">Cow A</th><th>Metric</th><th id="compare-name-b-th">Cow B</th></tr>
+                </thead>
+                <tbody id="compare-table-body"></tbody>
+            </table>
+            <div class="compare-radar-holder">
+                <canvas id="cow-radar-chart"></canvas>
+            </div>
+        </div>
+
+        <!-- Milking grades toast -->
+        <div id="milking-grades-toast" class="milking-grades-toast hidden"></div>
 
     </div>
 
@@ -333,6 +464,10 @@
                 <div class="instruction-item">
                     <span class="inst-num">3</span>
                     <span><strong>Simulate Cycles</strong>: Observe daytime transitions, watch cows walk to the barn at 18:00 for milking, and track data on the graphs.</span>
+                </div>
+                <div class="instruction-item">
+                    <span class="inst-num">4</span>
+                    <span><strong>Compare Cows</strong>: Hold Ctrl and click two cows to open a side-by-side comparison with a radar chart.</span>
                 </div>
             </div>
             <button id="btn-start" class="btn btn-primary btn-large">Enter Simulation</button>
