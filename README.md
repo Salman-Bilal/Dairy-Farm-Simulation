@@ -87,7 +87,7 @@ Imagine you own a dairy farm with dozens of cows. Every day you need to answer c
 │                                                          │
 │  ┌─────────────────┐ ┌───────────────┐ ┌─────────────┐  │
 │  │ /predict/health  │ │ /predict/milk │ │/predict/profit│ │
-│  │ (Random Forest)  │ │  (XGBoost)   │ │(Grad Boost)  │ │
+│  │     (SVM)        │ │(Random Forest)│ │(Time-Series RF)│ │
 │  └────────┬────────┘ └──────┬────────┘ └──────┬──────┘  │
 │           │                 │                  │         │
 │           ▼                 ▼                  ▼         │
@@ -125,8 +125,7 @@ Imagine you own a dairy farm with dozens of cows. Every day you need to answer c
 
 | Technology | Purpose | Why This Choice |
 |---|---|---|
-| **scikit-learn** | Health classification (Random Forest), Profit forecasting (Gradient Boosting) | Mature, well-documented, works out-of-the-box for tabular classification and regression. |
-| **XGBoost** | Milk yield prediction | Best-in-class gradient boosting for structured data. Handles feature interactions and non-linear patterns better than vanilla sklearn regressors. |
+| **scikit-learn** | Health classification (Support Vector Machine), Milk yield prediction (Random Forest Regressor), Profit forecasting (Time-Series Random Forest) | Mature, well-documented, works out-of-the-box for tabular classification, regression, and time-series-style lag-based forecasting. |
 | **pandas + numpy** | Data preprocessing | The standard Python data manipulation stack. Used for feature engineering, scaling, and encoding in both notebook training and backend inference. |
 | **joblib** | Model serialization | Saves/loads trained models as `.pkl` files. More efficient than `pickle` for numpy-heavy objects. |
 | **matplotlib + seaborn + plotly** | EDA notebook | Used during exploratory data analysis for visualizations, correlation heatmaps, and distribution plots. |
@@ -162,9 +161,9 @@ Dairy-Farm-Simulation/
 │   └── requirements.txt            ← Python dependencies
 │
 ├── 📂 models/                      ← Pre-trained ML models (joblib .pkl)
-│   ├── cow_health_model.pkl        ← Random Forest classifier (~14 KB)
-│   ├── milk_yield_model.pkl        ← XGBoost regressor (~3 MB)
-│   └── farm_financial_model.pkl    ← Gradient Boosting regressor (~937 KB)
+│   ├── cow_health_model.pkl        ← SVM classifier (~14 KB)
+│   ├── milk_yield_model.pkl        ← Random Forest regressor (~3 MB)
+│   └── farm_financial_model.pkl    ← Time-Series Random Forest regressor (~937 KB)
 │
 └── 📂 notebooks/                   ← Training & EDA
     ├── Untitled6.ipynb             ← Jupyter notebook with full EDA + model training
@@ -321,7 +320,7 @@ Forecasts next-day profit using a 7-day lag window.
 
 | Property | Detail |
 |---|---|
-| **Algorithm** | Random Forest Classifier |
+| **Algorithm** | Support Vector Machine (SVM) Classifier |
 | **Library** | scikit-learn |
 | **Input Features** | Age, Milk Drop %, Body Temperature, Activity Level, Stress Level, Days Since Last Healthy |
 | **Output** | Classification → `Healthy`, `At Risk`, or `Sick` |
@@ -332,8 +331,8 @@ Forecasts next-day profit using a 7-day lag window.
 
 | Property | Detail |
 |---|---|
-| **Algorithm** | XGBoost Regressor |
-| **Library** | xgboost |
+| **Algorithm** | Random Forest Regressor |
+| **Library** | scikit-learn |
 | **Input Features** | Breed (one-hot encoded), Age, Weight, Days in Milk, Stress Level, Health Status |
 | **Output** | Predicted milk yield in liters/day |
 | **Training Data** | `milk_production_data.csv` — 500 records |
@@ -343,7 +342,7 @@ Forecasts next-day profit using a 7-day lag window.
 
 | Property | Detail |
 |---|---|
-| **Algorithm** | Gradient Boosting Regressor |
+| **Algorithm** | Time-Series Random Forest (Regressor with lag features) |
 | **Library** | scikit-learn |
 | **Input Features** | 7-day profit lag window (lag_1 through lag_7) |
 | **Output** | Next-day predicted profit in USD (auto-converted to PKR at 1 USD = 280 PKR) |
