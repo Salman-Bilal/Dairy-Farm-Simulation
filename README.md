@@ -67,12 +67,12 @@ Imagine you own a dairy farm with dozens of cows. Every day you need to answer c
 ┌──────────────────────────────────────────────────────────┐
 │                     USER'S BROWSER                       │
 │                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │  Three.js 3D │  │  Chart.js    │  │  HTML/CSS UI  │  │
-│  │  Simulation  │  │  Dashboard   │  │  Controls     │  │
-│  └──────┬───────┘  └──────┬───────┘  └───────┬───────┘  │
-│         │                 │                   │          │
-│         └────────────┬────┴───────────────────┘          │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐   │
+│  │  Three.js 3D │  │  Chart.js    │  │  HTML/CSS UI  │   │
+│  │  Simulation  │  │  Dashboard   │  │  Controls     │   │
+│  └──────┬───────┘  └──────┬───────┘  └───────┬───────┘   │
+│         │                 │                  │           │
+│         └────────────┬────┴──────────────────┘           │
 │                      │                                   │
 │              ┌───────▼────────┐                          │
 │              │    app.js      │                          │
@@ -83,12 +83,12 @@ Imagine you own a dairy farm with dozens of cows. Every day you need to answer c
                        │
                        ▼
 ┌──────────────────────────────────────────────────────────┐
-│                  FASTAPI BACKEND (:8000)                  │
+│                  FASTAPI BACKEND (:8000)                 │
 │                                                          │
-│  ┌─────────────────┐ ┌───────────────┐ ┌─────────────┐  │
+│  ┌─────────────────┐ ┌───────────────┐ ┌─────────────┐   │
 │  │ /predict/health │ │ /predict/milk │ │/predict/profit│ │
-│  │ (Random Forest) │ │  (XGBoost)   │ │(Grad Boost)  │  │
-│  └────────┬────────┘ └──────┬────────┘ └──────┬──────┘  │
+│  │ (Random Forest) │ │  (XGBoost)    │ │(Grad Boost) │   │
+│  └────────┬────────┘ └──────┬────────┘ └──────┬──────┘   │
 │           │                 │                  │         │
 │           ▼                 ▼                  ▼         │
 │  ┌─────────────────────────────────────────────────────┐ │
@@ -428,7 +428,3 @@ The `frontend/` folder can be deployed to any static hosting provider:
 This project is licensed under the ISC License.
 
 ---
-
-<p align="center">
-  Built with 🐄 by <strong>Salman & Bilal</strong>
-</p>
